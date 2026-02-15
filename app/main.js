@@ -26,7 +26,11 @@ function matchHere(line, pattern) {
   let token = "";
   let tokenLength = 0;
 
-  if (pattern.startsWith("[")) {
+  if (pattern.startsWith("(")) {
+    const end = pattern.indexOf(")");
+    token = pattern.slice(0, end + 1);
+    tokenLength = end + 1;
+  } else if (pattern.startsWith("[")) {
     const end = pattern.indexOf("]");
     token = pattern.slice(0, end + 1);
     tokenLength = end + 1;
@@ -39,6 +43,17 @@ function matchHere(line, pattern) {
   }
 
   const restPattern = pattern.slice(tokenLength);
+
+  if (token.startsWith("(")) {
+    const content = token.slice(1, -1);
+    const options = content.split("|");
+    for (const option of options) {
+      if (matchHere(line, option + restPattern)) {
+        return true;
+      }
+    }
+    return false;
+  }
 
   if (restPattern.startsWith("+")) {
     return matchOneOrMore(line, token, restPattern.slice(1));

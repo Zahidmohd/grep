@@ -1,42 +1,73 @@
 function matchPattern(inputLine, pattern) {
-  if (pattern.length === 1) {
-    return inputLine.includes(pattern);
-  } else if (pattern === "\\d") {
-    for (let i = 0; i < inputLine.length; i++) {
-      if (inputLine[i] >= "0" && inputLine[i] <= "9") {
-        return true;
-      }
+  if (pattern.length === 0) return true;
+
+  for (let i = 0; i <= inputLine.length; i++) {
+    if (matchHere(inputLine.slice(i), pattern)) {
+      return true;
     }
-    return false;
-  } else if (pattern === "\\w") {
-    for (let i = 0; i < inputLine.length; i++) {
-      const char = inputLine[i];
-      if ((char >= "a" && char <= "z") || (char >= "A" && char <= "Z") || (char >= "0" && char <= "9") || char === "_") {
-        return true;
-      }
-    }
-    return false;
-  } else if (pattern.startsWith("[") && pattern.endsWith("]")) {
-    if (pattern[1] === "^") {
-      const negativeChars = pattern.slice(2, -1);
-      for (const char of inputLine) {
-        if (!negativeChars.includes(char)) {
-          return true;
-        }
-      }
-      return false;
-    } else {
-      const positiveChars = pattern.slice(1, -1);
-      for (const char of positiveChars) {
-        if (inputLine.includes(char)) {
-          return true;
-        }
-      }
-      return false;
-    }
-  } else {
-    throw new Error(`Unhandled pattern ${pattern}`);
   }
+  return false;
+}
+
+function matchHere(line, pattern) {
+  if (pattern.length === 0) {
+    return true;
+  }
+  if (line.length === 0) {
+    return false;
+  }
+
+  // Handle character groups [...]
+  if (pattern.startsWith("[")) {
+    const endIndex = pattern.indexOf("]");
+    if (endIndex !== -1) {
+      const groupContent = pattern.slice(1, endIndex);
+      const remainingPattern = pattern.slice(endIndex + 1);
+
+      let isMatch = false;
+      if (groupContent.startsWith("^")) {
+        const negativeChars = groupContent.slice(1);
+        isMatch = !negativeChars.includes(line[0]);
+      } else {
+        isMatch = groupContent.includes(line[0]);
+      }
+
+      if (isMatch) {
+        return matchHere(line.slice(1), remainingPattern);
+      }
+      return false;
+    }
+  }
+
+  // Handle escaped characters
+  if (pattern.startsWith("\\")) {
+    const type = pattern[1];
+    const remainingPattern = pattern.slice(2);
+
+    let isMatch = false;
+    if (type === "d") {
+      isMatch = (line[0] >= "0" && line[0] <= "9");
+    } else if (type === "w") {
+      isMatch = (line[0] >= "a" && line[0] <= "z") ||
+        (line[0] >= "A" && line[0] <= "Z") ||
+        (line[0] >= "0" && line[0] <= "9") ||
+        (line[0] === "_");
+    } else {
+      isMatch = (line[0] === type);
+    }
+
+    if (isMatch) {
+      return matchHere(line.slice(1), remainingPattern);
+    }
+    return false;
+  }
+
+  // Handle literals
+  if (line[0] === pattern[0]) {
+    return matchHere(line.slice(1), pattern.slice(1));
+  }
+
+  return false;
 }
 
 function main() {

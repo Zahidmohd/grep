@@ -1,25 +1,29 @@
+const fs = require("fs");
+
 function matchPattern(inputLine, pattern) {
   if (pattern.startsWith('^')) {
-    return matchHere(inputLine, pattern.slice(1));
+    const length = matchHere(inputLine, pattern.slice(1));
+    return length !== null ? inputLine.slice(0, length) : null;
   }
 
-  if (pattern.length === 0) return true;
+  if (pattern.length === 0) return "";
 
   for (let i = 0; i <= inputLine.length; i++) {
-    if (matchHere(inputLine.slice(i), pattern)) {
-      return true;
+    const length = matchHere(inputLine.slice(i), pattern);
+    if (length !== null) {
+      return inputLine.slice(i, i + length);
     }
   }
-  return false;
+  return null;
 }
 
 function matchHere(line, pattern) {
   if (pattern.length === 0) {
-    return true;
+    return 0;
   }
 
   if (pattern === "$") {
-    return line.length === 0;
+    return line.length === 0 ? 0 : null;
   }
 
   // Parse next token
@@ -48,11 +52,12 @@ function matchHere(line, pattern) {
     const content = token.slice(1, -1);
     const options = content.split("|");
     for (const option of options) {
-      if (matchHere(line, option + restPattern)) {
-        return true;
+      const length = matchHere(line, option + restPattern);
+      if (length !== null) {
+        return length;
       }
     }
-    return false;
+    return null;
   }
 
   if (restPattern.startsWith("+")) {
@@ -64,10 +69,13 @@ function matchHere(line, pattern) {
   }
 
   if (line.length > 0 && matchChar(line[0], token)) {
-    return matchHere(line.slice(1), restPattern);
+    const remainingLength = matchHere(line.slice(1), restPattern);
+    if (remainingLength !== null) {
+      return 1 + remainingLength;
+    }
   }
 
-  return false;
+  return null;
 }
 
 function matchChar(char, token) {
@@ -101,36 +109,48 @@ function matchOneOrMore(line, token, remainingPattern) {
     i++;
   }
 
-  if (i === 0) return false;
+  if (i === 0) return null;
 
   // Backtrack
   while (i > 0) {
-    if (matchHere(line.slice(i), remainingPattern)) {
-      return true;
+    const remainingLength = matchHere(line.slice(i), remainingPattern);
+    if (remainingLength !== null) {
+      return i + remainingLength;
     }
     i--;
   }
 
-  return false;
+  return null;
 }
 
 function matchZeroOrOne(line, token, remainingPattern) {
   if (line.length > 0 && matchChar(line[0], token)) {
-    if (matchHere(line.slice(1), remainingPattern)) {
-      return true;
+    const remainingLength = matchHere(line.slice(1), remainingPattern);
+    if (remainingLength !== null) {
+      return 1 + remainingLength;
     }
   }
   return matchHere(line, remainingPattern);
 }
 
 function main() {
-  const pattern = process.argv[3];
-  const input = require("fs").readFileSync(0, "utf-8");
+  const args = process.argv.slice(2);
+  let printOnly = false;
+  let pattern = "";
 
-  if (process.argv[2] !== "-E") {
-    console.log("Expected first argument to be '-E'");
+  if (args.includes("-o")) {
+    printOnly = true;
+  }
+
+  const eIndex = args.indexOf("-E");
+  if (eIndex !== -1 && eIndex + 1 < args.length) {
+    pattern = args[eIndex + 1];
+  } else {
+    console.log("Expected -E");
     process.exit(1);
   }
+
+  const input = fs.readFileSync(0, "utf-8");
 
   // You can use print statements as follows for debugging, they'll be visible when running tests.
   console.error("Logs from your program will appear here");
@@ -143,8 +163,9 @@ function main() {
   let anyMatch = false;
 
   for (const line of lines) {
-    if (matchPattern(line, pattern)) {
-      console.log(line);
+    const match = matchPattern(line, pattern);
+    if (match !== null) {
+      console.log(printOnly ? match : line);
       anyMatch = true;
     }
   }

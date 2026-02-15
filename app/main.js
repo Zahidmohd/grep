@@ -17,13 +17,23 @@ function matchPattern(inputLine, pattern) {
     }
     return false;
   } else if (pattern.startsWith("[") && pattern.endsWith("]")) {
-    const chars = pattern.slice(1, -1);
-    for (const char of chars) {
-      if (inputLine.includes(char)) {
-        return true;
+    if (pattern[1] === "^") {
+      const negativeChars = pattern.slice(2, -1);
+      for (const char of inputLine) {
+        if (!negativeChars.includes(char)) {
+          return true;
+        }
       }
+      return false;
+    } else {
+      const positiveChars = pattern.slice(1, -1);
+      for (const char of positiveChars) {
+        if (inputLine.includes(char)) {
+          return true;
+        }
+      }
+      return false;
     }
-    return false;
   } else {
     throw new Error(`Unhandled pattern ${pattern}`);
   }

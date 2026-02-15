@@ -22,58 +22,72 @@ function matchHere(line, pattern) {
     return line.length === 0;
   }
 
-  if (line.length === 0) {
-    return false;
-  }
+  // Parse next token
+  let token = "";
+  let tokenLength = 0;
 
-  // Handle character groups [...]
   if (pattern.startsWith("[")) {
-    const endIndex = pattern.indexOf("]");
-    if (endIndex !== -1) {
-      const groupContent = pattern.slice(1, endIndex);
-      const remainingPattern = pattern.slice(endIndex + 1);
-
-      let isMatch = false;
-      if (groupContent.startsWith("^")) {
-        const negativeChars = groupContent.slice(1);
-        isMatch = !negativeChars.includes(line[0]);
-      } else {
-        isMatch = groupContent.includes(line[0]);
-      }
-
-      if (isMatch) {
-        return matchHere(line.slice(1), remainingPattern);
-      }
-      return false;
-    }
+    const end = pattern.indexOf("]");
+    token = pattern.slice(0, end + 1);
+    tokenLength = end + 1;
+  } else if (pattern.startsWith("\\")) {
+    token = pattern.slice(0, 2);
+    tokenLength = 2;
+  } else {
+    token = pattern[0];
+    tokenLength = 1;
   }
 
-  // Handle escaped characters
-  if (pattern.startsWith("\\")) {
-    const type = pattern[1];
-    const remainingPattern = pattern.slice(2);
+  const restPattern = pattern.slice(tokenLength);
 
-    let isMatch = false;
-    if (type === "d") {
-      isMatch = (line[0] >= "0" && line[0] <= "9");
-    } else if (type === "w") {
-      isMatch = (line[0] >= "a" && line[0] <= "z") ||
-        (line[0] >= "A" && line[0] <= "Z") ||
-        (line[0] >= "0" && line[0] <= "9") ||
-        (line[0] === "_");
-    } else {
-      isMatch = (line[0] === type);
-    }
-
-    if (isMatch) {
-      return matchHere(line.slice(1), remainingPattern);
-    }
-    return false;
+  if (restPattern.startsWith("+")) {
+    return matchOneOrMore(line, token, restPattern.slice(1));
   }
 
-  // Handle literals
-  if (line[0] === pattern[0]) {
-    return matchHere(line.slice(1), pattern.slice(1));
+  if (line.length > 0 && matchChar(line[0], token)) {
+    return matchHere(line.slice(1), restPattern);
+  }
+
+  return false;
+}
+
+function matchChar(char, token) {
+  if (token.startsWith("[")) {
+    const content = token.slice(1, -1);
+    if (content.startsWith("^")) {
+      return !content.slice(1).includes(char);
+    }
+    return content.includes(char);
+  }
+
+  if (token.startsWith("\\")) {
+    const type = token[1];
+    if (type === "d") return char >= "0" && char <= "9";
+    if (type === "w") return (char >= "a" && char <= "z") ||
+      (char >= "A" && char <= "Z") ||
+      (char >= "0" && char <= "9") ||
+      char === "_";
+    return char === type;
+  }
+
+  return char === token;
+}
+
+function matchOneOrMore(line, token, remainingPattern) {
+  let i = 0;
+  // Greedy match
+  while (i < line.length && matchChar(line[i], token)) {
+    i++;
+  }
+
+  if (i === 0) return false;
+
+  // Backtrack
+  while (i > 0) {
+    if (matchHere(line.slice(i), remainingPattern)) {
+      return true;
+    }
+    i--;
   }
 
   return false;

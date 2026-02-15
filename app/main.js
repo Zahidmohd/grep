@@ -1,4 +1,8 @@
 function matchPattern(inputLine, pattern) {
+  if (pattern.startsWith('^')) {
+    return matchHere(inputLine, pattern.slice(1));
+  }
+
   if (pattern.length === 0) return true;
 
   for (let i = 0; i <= inputLine.length; i++) {

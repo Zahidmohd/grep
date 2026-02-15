@@ -147,14 +147,16 @@ function main() {
   const args = process.argv.slice(2);
   let printOnly = false;
   let pattern = "";
-  let colorAlways = false;
+  let useColor = false;
 
   if (args.includes("-o")) {
     printOnly = true;
   }
 
   if (args.includes("--color=always")) {
-    colorAlways = true;
+    useColor = true;
+  } else if (args.includes("--color=auto")) {
+    useColor = !!process.stdout.isTTY;
   }
 
   const eIndex = args.indexOf("-E");
@@ -185,7 +187,7 @@ function main() {
           console.log(m.match);
         }
       } else {
-        if (colorAlways) {
+        if (useColor) {
           let result = "";
           let lastIndex = 0;
           for (const m of matches) {

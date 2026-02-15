@@ -3,18 +3,18 @@ const fs = require("fs");
 function matchPattern(inputLine, pattern) {
   if (pattern.startsWith('^')) {
     const length = matchHere(inputLine, pattern.slice(1));
-    return length !== null ? [inputLine.slice(0, length)] : [];
+    return length !== null ? [{ start: 0, end: length, match: inputLine.slice(0, length) }] : [];
   }
 
   const matches = [];
   let i = 0;
 
-  if (pattern.length === 0) return [""];
+  if (pattern.length === 0) return [{ start: 0, end: 0, match: "" }];
 
   while (i <= inputLine.length) {
     const length = matchHere(inputLine.slice(i), pattern);
     if (length !== null) {
-      matches.push(inputLine.slice(i, i + length));
+      matches.push({ start: i, end: i + length, match: inputLine.slice(i, i + length) });
       if (length > 0) {
         i += length;
       } else {
@@ -147,9 +147,14 @@ function main() {
   const args = process.argv.slice(2);
   let printOnly = false;
   let pattern = "";
+  let colorAlways = false;
 
   if (args.includes("-o")) {
     printOnly = true;
+  }
+
+  if (args.includes("--color=always")) {
+    colorAlways = true;
   }
 
   const eIndex = args.indexOf("-E");
@@ -177,10 +182,24 @@ function main() {
     if (matches.length > 0) {
       if (printOnly) {
         for (const m of matches) {
-          console.log(m);
+          console.log(m.match);
         }
       } else {
-        console.log(line);
+        if (colorAlways) {
+          let result = "";
+          let lastIndex = 0;
+          for (const m of matches) {
+            if (m.start >= lastIndex) {
+              result += line.slice(lastIndex, m.start);
+              result += `\x1b[1;31m${m.match}\x1b[0m`;
+              lastIndex = m.end;
+            }
+          }
+          result += line.slice(lastIndex);
+          console.log(result);
+        } else {
+          console.log(line);
+        }
       }
       anyMatch = true;
     }
@@ -192,5 +211,4 @@ function main() {
     process.exit(1);
   }
 }
-
 main();

@@ -8,6 +8,14 @@ function matchPattern(inputLine, pattern) {
       }
     }
     return false;
+  } else if (pattern === "\\w") {
+    for (let i = 0; i < inputLine.length; i++) {
+      const char = inputLine[i];
+      if ((char >= "a" && char <= "z") || (char >= "A" && char <= "Z") || (char >= "0" && char <= "9") || char === "_") {
+        return true;
+      }
+    }
+    return false;
   } else {
     throw new Error(`Unhandled pattern ${pattern}`);
   }

@@ -17,6 +17,11 @@ function matchHere(line, pattern) {
   if (pattern.length === 0) {
     return true;
   }
+
+  if (pattern === "$") {
+    return line.length === 0;
+  }
+
   if (line.length === 0) {
     return false;
   }

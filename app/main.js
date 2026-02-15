@@ -125,7 +125,7 @@ function matchZeroOrOne(line, token, remainingPattern) {
 
 function main() {
   const pattern = process.argv[3];
-  const inputLine = require("fs").readFileSync(0, "utf-8").trim();
+  const input = require("fs").readFileSync(0, "utf-8");
 
   if (process.argv[2] !== "-E") {
     console.log("Expected first argument to be '-E'");
@@ -135,9 +135,21 @@ function main() {
   // You can use print statements as follows for debugging, they'll be visible when running tests.
   console.error("Logs from your program will appear here");
 
-  // TODO: Uncomment the code below to pass the first stage
-  if (matchPattern(inputLine, pattern)) {
-    console.log(inputLine);
+  const lines = input.split("\n");
+  if (input.endsWith("\n")) {
+    lines.pop();
+  }
+
+  let anyMatch = false;
+
+  for (const line of lines) {
+    if (matchPattern(line, pattern)) {
+      console.log(line);
+      anyMatch = true;
+    }
+  }
+
+  if (anyMatch) {
     process.exit(0);
   } else {
     process.exit(1);

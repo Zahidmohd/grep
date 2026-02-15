@@ -3,18 +3,28 @@ const fs = require("fs");
 function matchPattern(inputLine, pattern) {
   if (pattern.startsWith('^')) {
     const length = matchHere(inputLine, pattern.slice(1));
-    return length !== null ? inputLine.slice(0, length) : null;
+    return length !== null ? [inputLine.slice(0, length)] : [];
   }
 
-  if (pattern.length === 0) return "";
+  const matches = [];
+  let i = 0;
 
-  for (let i = 0; i <= inputLine.length; i++) {
+  if (pattern.length === 0) return [""];
+
+  while (i <= inputLine.length) {
     const length = matchHere(inputLine.slice(i), pattern);
     if (length !== null) {
-      return inputLine.slice(i, i + length);
+      matches.push(inputLine.slice(i, i + length));
+      if (length > 0) {
+        i += length;
+      } else {
+        i += 1;
+      }
+    } else {
+      i += 1;
     }
   }
-  return null;
+  return matches;
 }
 
 function matchHere(line, pattern) {
@@ -163,9 +173,15 @@ function main() {
   let anyMatch = false;
 
   for (const line of lines) {
-    const match = matchPattern(line, pattern);
-    if (match !== null) {
-      console.log(printOnly ? match : line);
+    const matches = matchPattern(line, pattern);
+    if (matches.length > 0) {
+      if (printOnly) {
+        for (const m of matches) {
+          console.log(m);
+        }
+      } else {
+        console.log(line);
+      }
       anyMatch = true;
     }
   }

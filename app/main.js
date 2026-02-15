@@ -1,6 +1,13 @@
 function matchPattern(inputLine, pattern) {
   if (pattern.length === 1) {
     return inputLine.includes(pattern);
+  } else if (pattern === "\\d") {
+    for (let i = 0; i < inputLine.length; i++) {
+      if (inputLine[i] >= "0" && inputLine[i] <= "9") {
+        return true;
+      }
+    }
+    return false;
   } else {
     throw new Error(`Unhandled pattern ${pattern}`);
   }

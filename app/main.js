@@ -16,6 +16,14 @@ function matchPattern(inputLine, pattern) {
       }
     }
     return false;
+  } else if (pattern.startsWith("[") && pattern.endsWith("]")) {
+    const chars = pattern.slice(1, -1);
+    for (const char of chars) {
+      if (inputLine.includes(char)) {
+        return true;
+      }
+    }
+    return false;
   } else {
     throw new Error(`Unhandled pattern ${pattern}`);
   }

@@ -137,6 +137,7 @@ function main() {
 
   // TODO: Uncomment the code below to pass the first stage
   if (matchPattern(inputLine, pattern)) {
+    console.log(inputLine);
     process.exit(0);
   } else {
     process.exit(1);

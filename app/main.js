@@ -44,6 +44,10 @@ function matchHere(line, pattern) {
     return matchOneOrMore(line, token, restPattern.slice(1));
   }
 
+  if (restPattern.startsWith("?")) {
+    return matchZeroOrOne(line, token, restPattern.slice(1));
+  }
+
   if (line.length > 0 && matchChar(line[0], token)) {
     return matchHere(line.slice(1), restPattern);
   }
@@ -91,6 +95,15 @@ function matchOneOrMore(line, token, remainingPattern) {
   }
 
   return false;
+}
+
+function matchZeroOrOne(line, token, remainingPattern) {
+  if (line.length > 0 && matchChar(line[0], token)) {
+    if (matchHere(line.slice(1), remainingPattern)) {
+      return true;
+    }
+  }
+  return matchHere(line, remainingPattern);
 }
 
 function main() {

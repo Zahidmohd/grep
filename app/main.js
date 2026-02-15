@@ -56,6 +56,8 @@ function matchHere(line, pattern) {
 }
 
 function matchChar(char, token) {
+  if (token === ".") return char !== "\n";
+
   if (token.startsWith("[")) {
     const content = token.slice(1, -1);
     if (content.startsWith("^")) {

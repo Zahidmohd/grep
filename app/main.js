@@ -1,7 +1,7 @@
 const fs = require("fs");
 const path = require("path");
 
-const DEBUG = false;
+const DEBUG = true;
 const log = (...args) => { if (DEBUG) console.error("DEBUG:", ...args); };
 
 function main() {
@@ -512,12 +512,23 @@ const solve = (i, j_start, j_end, inputLine, pattern, captures) => {
   }
 
   // Check for {n,m} quantifier on literals, character classes, etc.
-  const nextPatChar = (j + 1 < pattern.length) ? pattern[j + 1] : null;
-  if (nextPatChar === '{') {
+  // For escaped chars like \d, the { is at j+2, for regular chars it's at j+1
+  let quantifierPos = -1;
+  let elementSize = 1; // How many pattern chars does the element consume
+
+  if (pattern[j] === '\\' && j + 1 < pattern.length && j + 2 < pattern.length && pattern[j + 2] === '{') {
+    quantifierPos = j + 2;
+    elementSize = 2; // backslash + escaped char
+  } else if (pattern[j] !== '\\' && pattern[j] !== '(' && pattern[j] !== '[' && j + 1 < pattern.length && pattern[j + 1] === '{') {
+    quantifierPos = j + 1;
+    elementSize = 1;
+  }
+
+  if (quantifierPos !== -1) {
     // Parse {n,m} or {n}
-    let closeBrace = pattern.indexOf('}', j + 1);
+    let closeBrace = pattern.indexOf('}', quantifierPos);
     if (closeBrace !== -1) {
-      const rangeStr = pattern.slice(j + 2, closeBrace);
+      const rangeStr = pattern.slice(quantifierPos + 1, closeBrace);
       let min, max;
       if (rangeStr.includes(',')) {
         const parts = rangeStr.split(',');
@@ -573,6 +584,7 @@ const solve = (i, j_start, j_end, inputLine, pattern, captures) => {
   }
 
   // Literal character with quantifier
+  const nextPatChar = (j + 1 < pattern.length) ? pattern[j + 1] : null;
   const literalHasPlus = nextPatChar === '+';
   const literalHasQuestion = nextPatChar === '?';
 

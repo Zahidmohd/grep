@@ -58,7 +58,7 @@ function matchHere(line, pattern) {
 
   const restPattern = pattern.slice(tokenLength);
 
-  if (token.startsWith("(")) {
+  if (token.startsWith("(") && !restPattern.startsWith("+") && !restPattern.startsWith("*") && !restPattern.startsWith("?") && !restPattern.startsWith("{")) {
     const content = token.slice(1, -1);
     const options = content.split("|");
     for (const option of options) {
@@ -126,67 +126,118 @@ function matchChar(char, token) {
   return char === token;
 }
 
-function matchOneOrMore(line, token, remainingPattern) {
-  let i = 0;
-  // Greedy match
-  while (i < line.length && matchChar(line[i], token)) {
-    i++;
+function matchToken(line, token) {
+  if (line.length === 0) return null;
+
+  if (token.startsWith("(")) {
+    const content = token.slice(1, -1);
+    const options = content.split("|");
+    for (const option of options) {
+      // Check if option matches at start of line
+      const len = matchHere(line, option);
+      // matchHere matched the option AND the rest... wait.
+      // matchHere(line, pattern) checks if line starts with pattern.
+      // But we only want to match the OPTION itself here, not the "rest".
+      // We can hack this: matchHere(line, option + "$")? No, that expects EOL.
+      // We need matchHere to just match the pattern passed and return length used.
+      // Actually, matchHere(line, pattern) currently means "pattern matches at start of line".
+      // Ideally if we pass just the option as pattern, it returns length of option match?
+      // NO. matchHere(line, pattern) returns length of WHOLE pattern match.
+      // So if pattern is "abc", it returns 3.
+      // BUT matchHere logic currently recurses... 
+      // If we ask matchHere(line, option), and option is "abc", 
+      // it will eat 'a', call matchHere('bc'), eat 'b' call matchHere('c')... etc.
+      // Eventually matchHere("", "") returns 0.
+      // So yes, matchHere(original_line, option) returns length of string consumed by option.
+      // IF we pass NO remaining pattern.
+
+      const len = matchHere(line, option);
+      if (len !== null) return len;
+    }
+    return null;
   }
 
-  if (i === 0) return null;
+  if (matchChar(line[0], token)) {
+    return 1;
+  }
+  return null;
+}
 
-  // Backtrack
-  while (i > 0) {
-    const remainingLength = matchHere(line.slice(i), remainingPattern);
+function matchOneOrMore(line, token, remainingPattern) {
+  const matches = [];
+  let matchedParams = [];
+  let currentLine = line;
+  let totalLen = 0;
+
+  while (true) {
+    const len = matchToken(currentLine, token);
+    if (len === null) break;
+    matches.push(len);
+    totalLen += len;
+    currentLine = currentLine.slice(len);
+    matchedParams.push(totalLen);
+  }
+
+  for (let i = matches.length; i >= 1; i--) {
+    const currentTotalLen = matchedParams[i - 1];
+    const remainingLength = matchHere(line.slice(currentTotalLen), remainingPattern);
     if (remainingLength !== null) {
-      return i + remainingLength;
+      return currentTotalLen + remainingLength;
     }
-    i--;
   }
 
   return null;
 }
 
 function matchZeroOrMore(line, token, remainingPattern) {
-  let i = 0;
-  // Greedy match
-  while (i < line.length && matchChar(line[i], token)) {
-    i++;
+  const matches = [];
+  let matchedParams = [];
+  let currentLine = line;
+  let totalLen = 0;
+
+  while (true) {
+    const len = matchToken(currentLine, token);
+    if (len === null) break;
+    matches.push(len);
+    totalLen += len;
+    matchedParams.push(totalLen);
   }
 
-  // Backtrack
-  while (i >= 0) {
-    const remainingLength = matchHere(line.slice(i), remainingPattern);
+  for (let i = matches.length; i >= 0; i--) {
+    const currentTotalLen = i === 0 ? 0 : matchedParams[i - 1];
+    const remainingLength = matchHere(line.slice(currentTotalLen), remainingPattern);
     if (remainingLength !== null) {
-      return i + remainingLength;
+      return currentTotalLen + remainingLength;
     }
-    i--;
   }
 
   return null;
 }
 
 function matchTimes(line, token, times, remainingPattern) {
-  let i = 0;
-  while (i < times) {
-    if (i >= line.length || !matchChar(line[i], token)) {
-      return null; // Not enough matches
-    }
-    i++;
+  let currentLine = line;
+  let totalLen = 0;
+
+  for (let i = 0; i < times; i++) {
+    const len = matchToken(currentLine, token);
+    if (len === null) return null;
+    totalLen += len;
+    currentLine = currentLine.slice(len);
   }
 
-  const remainingLength = matchHere(line.slice(i), remainingPattern);
+  const remainingLength = matchHere(currentLine, remainingPattern);
   if (remainingLength !== null) {
-    return i + remainingLength;
+    return totalLen + remainingLength;
   }
   return null;
 }
 
 function matchZeroOrOne(line, token, remainingPattern) {
-  if (line.length > 0 && matchChar(line[0], token)) {
-    const remainingLength = matchHere(line.slice(1), remainingPattern);
+  const len = matchToken(line, token);
+  if (len !== null) {
+    const remainingLength = matchHere(line.slice(len), remainingPattern);
     if (remainingLength !== null) {
-      return 1 + remainingLength;
+      return len + remainingLength;
     }
   }
   return matchHere(line, remainingPattern);

@@ -1,7 +1,7 @@
 const fs = require("fs");
 const path = require("path");
 
-const DEBUG = true;
+const DEBUG = false;
 const log = (...args) => { if (DEBUG) console.error("DEBUG:", ...args); };
 
 function main() {
@@ -370,6 +370,54 @@ const solve = (i, j_start, j_end, inputLine, pattern, captures) => {
     const quant = (j + 2 < pattern.length) ? pattern[j + 2] : null;
     const hasPlus = quant === '+';
     const hasQuestion = quant === '?';
+    const hasBrace = quant === '{';
+
+    // Handle {n,m} quantifier for escaped chars
+    if (hasBrace && (escCh === 'd' || escCh === 'w' || escCh === 's' || (escCh >= '0' && escCh <= '9') === false)) {
+      let closeBrace = pattern.indexOf('}', j + 2);
+      if (closeBrace !== -1) {
+        const rangeStr = pattern.slice(j + 3, closeBrace);
+        let min, max;
+        if (rangeStr.includes(',')) {
+          const parts = rangeStr.split(',');
+          min = parseInt(parts[0]);
+          max = parts[1] === '' ? Infinity : parseInt(parts[1]);
+        } else {
+          min = max = parseInt(rangeStr);
+        }
+
+        const nextIndexAfter = closeBrace + 1;
+
+        // Determine match function based on escaped char
+        let checkChar;
+        if (escCh === 'd') {
+          checkChar = (ch) => /[0-9]/.test(ch);
+        } else if (escCh === 'w') {
+          checkChar = (ch) => isWordChar(ch);
+        } else if (escCh === 's') {
+          checkChar = (ch) => /\s/.test(ch);
+        } else {
+          // Escaped literal
+          checkChar = (ch) => ch === escCh;
+        }
+
+        // Count matches
+        let matchCount = 0;
+        while (i + matchCount < inputLine.length && checkChar(inputLine[i + matchCount])) {
+          matchCount++;
+        }
+
+        if (matchCount < min) return null;
+
+        const actualMax = Math.min(matchCount, max);
+        for (let k = actualMax; k >= min; k--) {
+          const res = solve(i + k, nextIndexAfter, j_end, inputLine, pattern, captures);
+          if (res) return res;
+        }
+        return null;
+      }
+    }
+
     const nextIndexAfter = j + (hasPlus || hasQuestion ? 3 : 2);
 
     // Backreference

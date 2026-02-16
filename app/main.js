@@ -2,7 +2,10 @@ const fs = require("fs");
 const path = require("path");
 
 const DEBUG = false;
+
 const log = (...args) => { if (DEBUG) console.error("DEBUG:", ...args); };
+
+let searchOptions = { ignoreCase: false };
 
 function main() {
   const args = process.argv.slice(2);
@@ -11,6 +14,10 @@ function main() {
   let useColor = false;
   let recursive = false;
   let filePaths = [];
+  let ignoreCase = false;
+  let showLineNumber = false;
+  let invertMatch = false;
+  let contextLines = 0;
 
   for (let i = 0; i < args.length; i++) {
     const arg = args[i];
@@ -24,6 +31,23 @@ function main() {
       useColor = !!process.stdout.isTTY;
     } else if (arg === "--color=never") {
       useColor = false;
+    } else if (arg === "-i" || arg === "--ignore-case") {
+      ignoreCase = true;
+    } else if (arg === "-n" || arg === "--line-number") {
+      showLineNumber = true;
+    } else if (arg === "-v" || arg === "--invert-match") {
+      invertMatch = true;
+    } else if (arg === "-C" || arg === "--context") {
+      if (i + 1 < args.length) {
+        const val = parseInt(args[i + 1]);
+        if (!isNaN(val)) {
+          contextLines = val;
+          i++;
+        }
+      }
+    } else if (arg.startsWith("-C") && arg.length > 2) {
+      const val = parseInt(arg.slice(2));
+      if (!isNaN(val)) contextLines = val;
     } else if (arg === "-E") {
       pattern = args[i + 1];
       i++;
@@ -33,6 +57,9 @@ function main() {
       }
     }
   }
+
+  // Update global search options
+  searchOptions.ignoreCase = ignoreCase;
 
   if (!pattern) {
     if (filePaths.length === 0) {
@@ -47,9 +74,10 @@ function main() {
     try {
       const content = fs.readFileSync(0, "utf-8");
       const lines = content.split("\n");
-      for (let line of lines) {
+      for (let k = 0; k < lines.length; k++) {
+        let line = lines[k];
         if (line.endsWith('\r')) line = line.slice(0, -1);
-        inputLines.push({ text: line, source: "(standard input)" });
+        inputLines.push({ text: line, source: "(standard input)", lineNumber: k + 1 });
       }
     } catch (e) {
       // Empty stdin
@@ -74,9 +102,10 @@ function main() {
         const content = fs.readFileSync(p, "utf-8");
         const lines = content.split("\n");
         if (content.endsWith("\n") && lines[lines.length - 1] === "") lines.pop();
-        for (let line of lines) {
+        for (let k = 0; k < lines.length; k++) {
+          let line = lines[k];
           if (line.endsWith('\r')) line = line.slice(0, -1);
-          inputLines.push({ text: line, source: p });
+          inputLines.push({ text: line, source: p, lineNumber: k + 1 });
         }
       } catch (e) { console.error(e.message); }
     }
@@ -85,33 +114,79 @@ function main() {
   let anyMatch = false;
   const showSource = (filePaths.length > 0 && recursive) || (filePaths.length > 1);
 
-  for (const { text: line, source } of inputLines) {
-    const matches = findMatches(line, pattern);
+  let lastPrintedLine = -1;
 
-    if (matches.length > 0) {
+  for (let lineIdx = 0; lineIdx < inputLines.length; lineIdx++) {
+    const { text: line, source } = inputLines[lineIdx];
+    const matches = findMatches(line, pattern);
+    const hasMatch = matches.length > 0;
+    const isSelected = invertMatch ? !hasMatch : hasMatch;
+
+    if (isSelected) {
       anyMatch = true;
-      if (printOnly) {
-        for (const m of matches) {
-          if (showSource) console.log(`${source}:${m.match}`);
-          else console.log(m.match);
-        }
-      } else {
-        let output = line;
-        if (useColor) {
+
+      const printLine = (idx, sep) => {
+        if (idx <= lastPrintedLine) return;
+        lastPrintedLine = idx;
+
+        const currentLineObj = inputLines[idx];
+        const lineContent = currentLineObj.text;
+
+        // Prepare highlight for the matching line if needed
+        let output = lineContent;
+        const isTargetLine = (idx === lineIdx);
+
+        // Highlight only the target line, and only if we are not in invert mode (invert usually doesn't highlight)
+        // And useColor is enabled
+        if (isTargetLine && !invertMatch && useColor && matches.length > 0) {
           let parts = [];
           let lastIndex = 0;
           for (const m of matches) {
             if (m.start >= lastIndex) {
-              parts.push(line.slice(lastIndex, m.start));
+              parts.push(lineContent.slice(lastIndex, m.start));
               parts.push(`\x1b[1;31m${m.match}\x1b[0m`);
               lastIndex = m.end;
             }
           }
-          parts.push(line.slice(lastIndex));
+          parts.push(lineContent.slice(lastIndex));
           output = parts.join("");
         }
-        if (showSource) console.log(`${source}:${output}`);
-        else console.log(output);
+
+        let prefix = "";
+        if (showSource) prefix += `${currentLineObj.source}${sep}`;
+        if (showLineNumber) prefix += `${currentLineObj.lineNumber}${sep}`;
+
+        console.log(`${prefix}${output}`);
+      };
+
+      if (printOnly && !invertMatch) {
+        for (const m of matches) {
+          let prefix = "";
+          if (showSource) prefix += `${source}:`;
+          if (showLineNumber) prefix += `${inputLines[lineIdx].lineNumber}:`;
+          console.log(`${prefix}${m.match}`);
+        }
+      } else {
+        const startCtx = Math.max(0, lineIdx - contextLines);
+
+        if (lastPrintedLine !== -1 && startCtx > lastPrintedLine + 1) {
+          // Check if we are in same file before printing separator?
+          // Standard grep prints "--" between disjoint groups.
+          console.log("--");
+        }
+
+        for (let k = startCtx; k < lineIdx; k++) {
+          if (inputLines[k].source !== source) continue;
+          printLine(k, '-');
+        }
+
+        printLine(lineIdx, ':');
+
+        const endCtx = Math.min(inputLines.length - 1, lineIdx + contextLines);
+        for (let k = lineIdx + 1; k <= endCtx; k++) {
+          if (inputLines[k].source !== source) break;
+          printLine(k, '-');
+        }
       }
     }
   }
@@ -192,6 +267,66 @@ const findTopLevelPipes = (pattern, j_start, j_end) => {
   return splits;
 };
 
+const charsMatch = (c1, c2) => {
+  if (searchOptions.ignoreCase) {
+    return c1.toLowerCase() === c2.toLowerCase();
+  }
+  return c1 === c2;
+};
+
+const stringsMatch = (s1, s2) => {
+  if (searchOptions.ignoreCase) {
+    return s1.toLowerCase() === s2.toLowerCase();
+  }
+  return s1 === s2;
+};
+
+const expandRanges = (str) => {
+  let expanded = "";
+  let i = 0;
+  while (i < str.length) {
+    if (str[i] === '\\') {
+      if (i + 1 < str.length) {
+        const esc = str[i + 1];
+        if (esc === 'd') { expanded += "0123456789"; i += 2; continue; }
+        if (esc === 'w') { expanded += "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789_"; i += 2; continue; }
+        if (esc === 's') { expanded += " \t\n\r\f\v"; i += 2; continue; }
+        expanded += esc; // literal escape
+        i += 2;
+        continue;
+      } else {
+        expanded += '\\';
+        i++;
+        continue;
+      }
+    }
+
+    // Check for range
+    if (i + 2 < str.length && str[i + 1] === '-') {
+      const start = str.charCodeAt(i);
+      let endChar = str.charCodeAt(i + 2);
+      let jump = 3;
+
+      if (str[i + 2] === '\\') {
+        endChar = str.charCodeAt(i + 3);
+        jump = 4;
+      }
+
+      if (start <= endChar) {
+        for (let c = start; c <= endChar; c++) {
+          expanded += String.fromCharCode(c);
+        }
+        i += jump;
+        continue;
+      }
+    }
+
+    expanded += str[i];
+    i++;
+  }
+  return expanded;
+};
+
 const solve = (i, j_start, j_end, inputLine, pattern, captures) => {
   log(`solve(i=${i}, j_start=${j_start}, j_end=${j_end}) on pat='${pattern.substring(j_start, j_end)}'`);
 
@@ -234,7 +369,16 @@ const solve = (i, j_start, j_end, inputLine, pattern, captures) => {
     const isNegated = str[0] === '^';
     if (isNegated) str = str.slice(1);
 
-    const check = (char) => isNegated ? !str.includes(char) : str.includes(char);
+    // Proper splitting needs handling of escaped brackets inside?
+    // Current parser assumes first ] closes it.
+
+    str = expandRanges(str);
+    if (searchOptions.ignoreCase) str = str.toLowerCase();
+
+    const check = (char) => {
+      if (searchOptions.ignoreCase) char = char.toLowerCase();
+      return isNegated ? !str.includes(char) : str.includes(char);
+    };
 
     // Handle {n,m} for character class
     if (hasBrace) {
@@ -531,7 +675,7 @@ const solve = (i, j_start, j_end, inputLine, pattern, captures) => {
         return null;
       }
       if (!hasPlus && !hasQuestion && !hasStar) {
-        if (inputLine.startsWith(groupValue, i)) {
+        if (i + groupValue.length <= inputLine.length && stringsMatch(inputLine.slice(i, i + groupValue.length), groupValue)) {
           log(`Backref \\${groupIndex + 1} matched '${groupValue}'`);
           return solve(i + groupValue.length, nextIndexAfter, j_end, inputLine, pattern, captures);
         }
@@ -540,7 +684,7 @@ const solve = (i, j_start, j_end, inputLine, pattern, captures) => {
 
       let count = 0;
       let curr = i;
-      while (inputLine.startsWith(groupValue, curr)) {
+      while (curr + groupValue.length <= inputLine.length && stringsMatch(inputLine.slice(curr, curr + groupValue.length), groupValue)) {
         curr += groupValue.length;
         count++;
       }
@@ -738,12 +882,12 @@ const solve = (i, j_start, j_end, inputLine, pattern, captures) => {
           matchFunc = (pos) => pos < inputLine.length && /\s/.test(inputLine[pos]);
         } else {
           // Escaped literal
-          matchFunc = (pos) => pos < inputLine.length && inputLine[pos] === escCh;
+          matchFunc = (pos) => pos < inputLine.length && charsMatch(inputLine[pos], escCh);
         }
       } else {
         // Regular literal
         const literal = pattern[j];
-        matchFunc = (pos) => pos < inputLine.length && inputLine[pos] === literal;
+        matchFunc = (pos) => pos < inputLine.length && charsMatch(inputLine[pos], literal);
       }
 
       // Count how many times we can match
@@ -776,7 +920,7 @@ const solve = (i, j_start, j_end, inputLine, pattern, captures) => {
   if (literalHasPlus || literalHasQuestion || literalHasStar) {
     const literal = pattern[j];
     let matchCount = 0;
-    while (i + matchCount < inputLine.length && inputLine[i + matchCount] === literal) matchCount++;
+    while (i + matchCount < inputLine.length && charsMatch(inputLine[i + matchCount], literal)) matchCount++;
 
     if (literalHasPlus || literalHasStar) {
       const minMatches = literalHasPlus ? 1 : 0;
@@ -801,7 +945,7 @@ const solve = (i, j_start, j_end, inputLine, pattern, captures) => {
   }
 
   // Default: literal single char
-  if (i < inputLine.length && pattern[j] === inputLine[i]) {
+  if (i < inputLine.length && charsMatch(inputLine[i], pattern[j])) {
     return solve(i + 1, j + 1, j_end, inputLine, pattern, captures);
   }
 
@@ -809,15 +953,32 @@ const solve = (i, j_start, j_end, inputLine, pattern, captures) => {
 };
 
 function findMatches(line, pattern) {
-  const hasStartAnchor = pattern.length > 0 && pattern[0] === '^' && isUnescaped(pattern, 0);
+  let hasStartAnchor = false;
+  let hasEndAnchor = false;
+  let j_start_pattern = 0;
+  let j_end_pattern = pattern.length;
+
+  if (pattern.length > 0 && pattern[0] === '^' && isUnescaped(pattern, 0)) {
+    hasStartAnchor = true;
+    j_start_pattern = 1;
+  } else if (pattern.length > 1 && pattern[0] === '\\' && pattern[1] === 'A') {
+    hasStartAnchor = true;
+    j_start_pattern = 2;
+  }
+
   const lastIndex = pattern.length - 1;
-  const hasEndAnchor = pattern.length > 0 && pattern[lastIndex] === '$' && isUnescaped(pattern, lastIndex);
+  // Check for $ (end anchor)
+  // Be careful not to match \$ as anchor
+  if (pattern.length > 0 && pattern[lastIndex] === '$' && isUnescaped(pattern, lastIndex)) {
+    hasEndAnchor = true;
+    j_end_pattern = lastIndex;
+  } else if (pattern.length > 1 && pattern[lastIndex] === 'z' && pattern[lastIndex - 1] === '\\' && isUnescaped(pattern, lastIndex - 1)) {
+    hasEndAnchor = true;
+    j_end_pattern = lastIndex - 1;
+  }
 
   groupInfo = preParseGroups(pattern);
   log('Pre-parsed group info:', groupInfo);
-
-  const j_start_pattern = hasStartAnchor ? 1 : 0;
-  const j_end_pattern = hasEndAnchor ? pattern.length - 1 : pattern.length;
 
   const allMatches = [];
 
@@ -826,6 +987,8 @@ function findMatches(line, pattern) {
     if (hasStartAnchor && i > 0) break;
 
     let res = solve(i, j_start_pattern, j_end_pattern, line, pattern, []);
+
+    // Check end anchor match
     if (hasEndAnchor && res && res.pos !== line.length) res = null;
 
     if (res) {

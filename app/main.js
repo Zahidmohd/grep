@@ -168,7 +168,11 @@ function matchZeroOrOne(line, token, remainingPattern) {
 
 function main() {
   const args = process.argv.slice(2);
+  let printOnly = false;
+  let pattern = "";
+  let useColor = false;
   let recursive = false;
+  let filePaths = [];
 
   for (let i = 0; i < args.length; i++) {
     const arg = args[i];

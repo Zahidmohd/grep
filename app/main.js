@@ -168,15 +168,14 @@ function matchZeroOrOne(line, token, remainingPattern) {
 
 function main() {
   const args = process.argv.slice(2);
-  let printOnly = false;
-  let pattern = "";
-  let useColor = false;
-  let filePaths = [];
+  let recursive = false;
 
   for (let i = 0; i < args.length; i++) {
     const arg = args[i];
     if (arg === "-o") {
       printOnly = true;
+    } else if (arg === "-r") {
+      recursive = true;
     } else if (arg === "--color=always") {
       useColor = true;
     } else if (arg === "--color=auto") {
@@ -204,14 +203,58 @@ function main() {
 
   let anyMatch = false;
 
-  // If no files provided, read from stdin
+  // If no files provided, read from stdin (unless recursive, which requires path)
   if (filePaths.length === 0) {
-    filePaths.push(0); // 0 is file descriptor for stdin
+    if (!recursive) {
+      filePaths.push(0); // 0 is file descriptor for stdin
+    }
   }
 
-  const multipleFiles = filePaths.length > 1;
+  const expandedFilePaths = [];
 
-  for (const filePath of filePaths) {
+  const processPath = (path) => {
+    try {
+      // If it's stdin (0), just add it
+      if (path === 0) {
+        expandedFilePaths.push(0);
+        return;
+      }
+
+      const stats = fs.statSync(path);
+      if (stats.isDirectory()) {
+        if (recursive) {
+          const items = fs.readdirSync(path);
+          for (const item of items) {
+            // Join path - rudimentary, assume / or \ handled by FS or construct correctly
+            // In node "path" module safer, but let's try simple concat with / if needed
+            // path.join would be better but trying to stick to minimal imports if possible
+            // or just require "path"
+            const fullPath = path.endsWith("/") || path.endsWith("\\") ? path + item : path + "/" + item;
+            processPath(fullPath);
+          }
+        } else {
+          console.error(`${path}: Is a directory`);
+        }
+      } else {
+        expandedFilePaths.push(path);
+      }
+    } catch (e) {
+      console.error(e.message);
+    }
+  };
+
+  for (const p of filePaths) {
+    processPath(p);
+  }
+
+  // Logic: if multiple files OR recursive search on directory, show prefix?
+  // Standard grep: single file (explicit) -> no prefix. 
+  // multiple files -> prefix. 
+  // directory (-r) -> always prefix files found inside.
+
+  const showFilename = expandedFilePaths.length > 1 || recursive;
+
+  for (const filePath of expandedFilePaths) {
     let input = "";
     try {
       input = fs.readFileSync(filePath, "utf-8");
@@ -221,7 +264,6 @@ function main() {
     }
 
     const lines = input.split("\n");
-    // Only remove trailing newline if it's not stdin (stdin stream behavior might differ, but generally consistent)
     if (input.endsWith("\n")) {
       lines.pop();
     }
@@ -229,7 +271,12 @@ function main() {
     for (const line of lines) {
       const matches = matchPattern(line, pattern);
       if (matches.length > 0) {
-        const prefix = (multipleFiles && typeof filePath === 'string') ? `${filePath}:` : "";
+        // Fix prefix logic: only skip if explicitly single file arg and NOT recursive expansion
+        // But "expandedFilePaths.length > 1" usually covers specific files. 
+        // Recursive usually implies we want filenames.
+        // Let's stick to "showFilename" calculated above.
+
+        const prefix = (showFilename && typeof filePath === 'string') ? `${filePath}:` : "";
 
         if (printOnly) {
           for (const m of matches) {

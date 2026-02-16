@@ -2,7 +2,7 @@ const fs = require("fs");
 
 function matchPattern(inputLine, pattern) {
   if (pattern.startsWith('^')) {
-    const length = matchHere(inputLine, pattern.slice(1));
+    const length = matchHere(inputLine, pattern.slice(1), []);
     return length !== null ? [{ start: 0, end: length, match: inputLine.slice(0, length) }] : [];
   }
 
@@ -12,7 +12,7 @@ function matchPattern(inputLine, pattern) {
   if (pattern.length === 0) return [{ start: 0, end: 0, match: "" }];
 
   while (i <= inputLine.length) {
-    const length = matchHere(inputLine.slice(i), pattern);
+    const length = matchHere(inputLine.slice(i), pattern, []);
     if (length !== null) {
       matches.push({ start: i, end: i + length, match: inputLine.slice(i, i + length) });
       if (length > 0) {
@@ -27,7 +27,7 @@ function matchPattern(inputLine, pattern) {
   return matches;
 }
 
-function matchHere(line, pattern) {
+function matchHere(line, pattern, captures = []) {
   if (pattern.length === 0) {
     return 0;
   }
@@ -58,28 +58,59 @@ function matchHere(line, pattern) {
 
   const restPattern = pattern.slice(tokenLength);
 
+  // Handle Backreferences \1 ... \9
+  if (token.startsWith("\\")) {
+    const char = token[1];
+    if (char >= '1' && char <= '9') {
+      const index = parseInt(char, 10);
+      // 1-based index, captures is 0-based
+      const captureIndex = index - 1;
+      if (captureIndex < captures.length) {
+        const expected = captures[captureIndex];
+        if (line.startsWith(expected)) {
+          const remainingLength = matchHere(line.slice(expected.length), restPattern, captures);
+          if (remainingLength !== null) {
+            return expected.length + remainingLength;
+          }
+        }
+        return null; // Match failed
+      } else {
+        // Invalid backref or not yet captured (forward reference impossible here)
+        return null;
+      }
+    }
+  }
+
   if (token.startsWith("(") && !restPattern.startsWith("+") && !restPattern.startsWith("*") && !restPattern.startsWith("?") && !restPattern.startsWith("{")) {
     const content = token.slice(1, -1);
     const options = content.split("|");
     for (const option of options) {
-      const length = matchHere(line, option + restPattern);
-      if (length !== null) {
-        return length;
+      // Isolate group match
+      const groupLength = matchHere(line, option, captures); // Matches prefix
+
+      if (groupLength !== null) {
+        const capturedStr = line.slice(0, groupLength);
+        const newCaptures = [...captures, capturedStr];
+
+        const remainingLength = matchHere(line.slice(groupLength), restPattern, newCaptures);
+        if (remainingLength !== null) {
+          return groupLength + remainingLength;
+        }
       }
     }
     return null;
   }
 
   if (restPattern.startsWith("+")) {
-    return matchOneOrMore(line, token, restPattern.slice(1));
+    return matchOneOrMore(line, token, restPattern.slice(1), captures);
   }
 
   if (restPattern.startsWith("*")) {
-    return matchZeroOrMore(line, token, restPattern.slice(1));
+    return matchZeroOrMore(line, token, restPattern.slice(1), captures);
   }
 
   if (restPattern.startsWith("?")) {
-    return matchZeroOrOne(line, token, restPattern.slice(1));
+    return matchZeroOrOne(line, token, restPattern.slice(1), captures);
   }
 
   if (restPattern.startsWith("{")) {
@@ -91,25 +122,25 @@ function matchHere(line, pattern) {
         const minTimes = parseInt(parts[0], 10);
         if (!isNaN(minTimes)) {
           if (parts[1] === "") {
-            return matchAtLeast(line, token, minTimes, restPattern.slice(end + 1));
+            return matchAtLeast(line, token, minTimes, restPattern.slice(end + 1), captures);
           } else {
             const maxTimes = parseInt(parts[1], 10);
             if (!isNaN(maxTimes)) {
-              return matchRange(line, token, minTimes, maxTimes, restPattern.slice(end + 1));
+              return matchRange(line, token, minTimes, maxTimes, restPattern.slice(end + 1), captures);
             }
           }
         }
       } else {
         const times = parseInt(content, 10);
         if (!isNaN(times)) {
-          return matchTimes(line, token, times, restPattern.slice(end + 1));
+          return matchTimes(line, token, times, restPattern.slice(end + 1), captures);
         }
       }
     }
   }
 
   if (line.length > 0 && matchChar(line[0], token)) {
-    const remainingLength = matchHere(line.slice(1), restPattern);
+    const remainingLength = matchHere(line.slice(1), restPattern, captures);
     if (remainingLength !== null) {
       return 1 + remainingLength;
     }
@@ -142,7 +173,7 @@ function matchChar(char, token) {
   return char === token;
 }
 
-function matchToken(line, token) {
+function matchToken(line, token, captures = []) {
   if (line.length === 0) return null;
 
   if (token.startsWith("(")) {
@@ -150,7 +181,7 @@ function matchToken(line, token) {
     const options = content.split("|");
     for (const option of options) {
       // Check if option matches at start of line
-      const len = matchHere(line, option);
+      const len = matchHere(line, option, captures);
       // Logic explanation: matchHere with just the option checks if the line starts with the option pattern.
       // It returns the length consumed by the pattern if it matches (because recursive base case returns 0).
       if (len !== null) return len;
@@ -166,14 +197,14 @@ function matchToken(line, token) {
   return null;
 }
 
-function matchOneOrMore(line, token, remainingPattern) {
+function matchOneOrMore(line, token, remainingPattern, captures) {
   const matches = [];
   let matchedParams = [];
   let currentLine = line;
   let totalLen = 0;
 
   while (true) {
-    const len = matchToken(currentLine, token);
+    const len = matchToken(currentLine, token, captures);
     if (len === null) break;
     if (len === 0) break; // Avoid infinite loop
     matches.push(len);
@@ -184,7 +215,7 @@ function matchOneOrMore(line, token, remainingPattern) {
 
   for (let i = matches.length; i >= 1; i--) {
     const currentTotalLen = matchedParams[i - 1];
-    const remainingLength = matchHere(line.slice(currentTotalLen), remainingPattern);
+    const remainingLength = matchHere(line.slice(currentTotalLen), remainingPattern, captures);
     if (remainingLength !== null) {
       return currentTotalLen + remainingLength;
     }
@@ -193,14 +224,14 @@ function matchOneOrMore(line, token, remainingPattern) {
   return null;
 }
 
-function matchZeroOrMore(line, token, remainingPattern) {
+function matchZeroOrMore(line, token, remainingPattern, captures) {
   const matches = [];
   let matchedParams = [];
   let currentLine = line;
   let totalLen = 0;
 
   while (true) {
-    const len = matchToken(currentLine, token);
+    const len = matchToken(currentLine, token, captures);
     if (len === null) break;
     // Prevent infinite loop if token matches empty string (e.g. empty group or *)
     // Standard regex behavior: if a repetition matches empty string, it stops or advances carefully.
@@ -215,7 +246,7 @@ function matchZeroOrMore(line, token, remainingPattern) {
 
   for (let i = matches.length; i >= 0; i--) {
     const currentTotalLen = i === 0 ? 0 : matchedParams[i - 1];
-    const remainingLength = matchHere(line.slice(currentTotalLen), remainingPattern);
+    const remainingLength = matchHere(line.slice(currentTotalLen), remainingPattern, captures);
     if (remainingLength !== null) {
       return currentTotalLen + remainingLength;
     }
@@ -224,13 +255,13 @@ function matchZeroOrMore(line, token, remainingPattern) {
   return null;
 }
 
-function matchAtLeast(line, token, minTimes, remainingPattern) {
+function matchAtLeast(line, token, minTimes, remainingPattern, captures) {
   let currentLine = line;
   let totalLen = 0;
 
   // First match exactly minTimes
   for (let i = 0; i < minTimes; i++) {
-    const len = matchToken(currentLine, token);
+    const len = matchToken(currentLine, token, captures);
     if (len === null) return null;
     totalLen += len;
     currentLine = currentLine.slice(len);
@@ -240,7 +271,7 @@ function matchAtLeast(line, token, minTimes, remainingPattern) {
   // Reuse matchZeroOrMore logic but we need to return TOTAL length including the prefix
   // matchZeroOrMore returns length or null.
 
-  const suffixLength = matchZeroOrMore(currentLine, token, remainingPattern);
+  const suffixLength = matchZeroOrMore(currentLine, token, remainingPattern, captures);
   if (suffixLength !== null) {
     return totalLen + suffixLength;
   }
@@ -248,13 +279,13 @@ function matchAtLeast(line, token, minTimes, remainingPattern) {
   return null;
 }
 
-function matchRange(line, token, minTimes, maxTimes, remainingPattern) {
+function matchRange(line, token, minTimes, maxTimes, remainingPattern, captures) {
   let currentLine = line;
   let totalLen = 0;
 
   // First match exactly minTimes
   for (let i = 0; i < minTimes; i++) {
-    const len = matchToken(currentLine, token);
+    const len = matchToken(currentLine, token, captures);
     if (len === null) return null;
     totalLen += len;
     currentLine = currentLine.slice(len);
@@ -269,7 +300,7 @@ function matchRange(line, token, minTimes, maxTimes, remainingPattern) {
 
   // Collect up to additionalMax matches
   for (let i = 0; i < additionalMax; i++) {
-    const len = matchToken(suffixLine, token);
+    const len = matchToken(suffixLine, token, captures);
     if (len === null) break;
     if (len === 0) break; // Avoid infinite loop
 
@@ -282,7 +313,7 @@ function matchRange(line, token, minTimes, maxTimes, remainingPattern) {
   // Backtrack from most matches down to 0
   for (let i = matches.length; i >= 0; i--) {
     const currentSuffixLen = i === 0 ? 0 : matchedParams[i - 1];
-    const remainingLength = matchHere(currentLine.slice(currentSuffixLen), remainingPattern);
+    const remainingLength = matchHere(currentLine.slice(currentSuffixLen), remainingPattern, captures);
     if (remainingLength !== null) {
       return totalLen + currentSuffixLen + remainingLength;
     }
@@ -291,33 +322,33 @@ function matchRange(line, token, minTimes, maxTimes, remainingPattern) {
   return null;
 }
 
-function matchTimes(line, token, times, remainingPattern) {
+function matchTimes(line, token, times, remainingPattern, captures) {
   let currentLine = line;
   let totalLen = 0;
 
   for (let i = 0; i < times; i++) {
-    const len = matchToken(currentLine, token);
+    const len = matchToken(currentLine, token, captures);
     if (len === null) return null;
     totalLen += len;
     currentLine = currentLine.slice(len);
   }
 
-  const remainingLength = matchHere(currentLine, remainingPattern);
+  const remainingLength = matchHere(currentLine, remainingPattern, captures);
   if (remainingLength !== null) {
     return totalLen + remainingLength;
   }
   return null;
 }
 
-function matchZeroOrOne(line, token, remainingPattern) {
-  const len = matchToken(line, token);
+function matchZeroOrOne(line, token, remainingPattern, captures) {
+  const len = matchToken(line, token, captures);
   if (len !== null) {
-    const remainingLength = matchHere(line.slice(len), remainingPattern);
+    const remainingLength = matchHere(line.slice(len), remainingPattern, captures);
     if (remainingLength !== null) {
       return len + remainingLength;
     }
   }
-  return matchHere(line, remainingPattern);
+  return matchHere(line, remainingPattern, captures);
 }
 
 function main() {

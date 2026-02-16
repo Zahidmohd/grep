@@ -1,355 +1,5 @@
 const fs = require("fs");
-
-function matchPattern(inputLine, pattern) {
-  if (pattern.startsWith('^')) {
-    const length = matchHere(inputLine, pattern.slice(1), []);
-    return length !== null ? [{ start: 0, end: length, match: inputLine.slice(0, length) }] : [];
-  }
-
-  const matches = [];
-  let i = 0;
-
-  if (pattern.length === 0) return [{ start: 0, end: 0, match: "" }];
-
-  while (i <= inputLine.length) {
-    const length = matchHere(inputLine.slice(i), pattern, []);
-    if (length !== null) {
-      matches.push({ start: i, end: i + length, match: inputLine.slice(i, i + length) });
-      if (length > 0) {
-        i += length;
-      } else {
-        i += 1;
-      }
-    } else {
-      i += 1;
-    }
-  }
-  return matches;
-}
-
-function matchHere(line, pattern, captures = []) {
-  if (pattern.length === 0) {
-    return 0;
-  }
-
-  if (pattern === "$") {
-    return line.length === 0 ? 0 : null;
-  }
-
-  // Parse next token
-  let token = "";
-  let tokenLength = 0;
-
-  if (pattern.startsWith("(")) {
-    const end = pattern.indexOf(")");
-    token = pattern.slice(0, end + 1);
-    tokenLength = end + 1;
-  } else if (pattern.startsWith("[")) {
-    const end = pattern.indexOf("]");
-    token = pattern.slice(0, end + 1);
-    tokenLength = end + 1;
-  } else if (pattern.startsWith("\\")) {
-    token = pattern.slice(0, 2);
-    tokenLength = 2;
-  } else {
-    token = pattern[0];
-    tokenLength = 1;
-  }
-
-  const restPattern = pattern.slice(tokenLength);
-
-  // Handle Backreferences \1 ... \9
-  if (token.startsWith("\\")) {
-    const char = token[1];
-    if (char >= '1' && char <= '9') {
-      const index = parseInt(char, 10);
-      // 1-based index, captures is 0-based
-      const captureIndex = index - 1;
-      if (captureIndex < captures.length) {
-        const expected = captures[captureIndex];
-        if (line.startsWith(expected)) {
-          const remainingLength = matchHere(line.slice(expected.length), restPattern, captures);
-          if (remainingLength !== null) {
-            return expected.length + remainingLength;
-          }
-        }
-        return null; // Match failed
-      } else {
-        // Invalid backref or not yet captured (forward reference impossible here)
-        return null;
-      }
-    }
-  }
-
-  if (token.startsWith("(") && !restPattern.startsWith("+") && !restPattern.startsWith("*") && !restPattern.startsWith("?") && !restPattern.startsWith("{")) {
-    const content = token.slice(1, -1);
-    const options = content.split("|");
-    for (const option of options) {
-      // Isolate group match
-      const groupLength = matchHere(line, option, captures); // Matches prefix
-
-      if (groupLength !== null) {
-        const capturedStr = line.slice(0, groupLength);
-        const newCaptures = [...captures, capturedStr];
-
-        const remainingLength = matchHere(line.slice(groupLength), restPattern, newCaptures);
-        if (remainingLength !== null) {
-          return groupLength + remainingLength;
-        }
-      }
-    }
-    return null;
-  }
-
-  if (restPattern.startsWith("+")) {
-    return matchOneOrMore(line, token, restPattern.slice(1), captures);
-  }
-
-  if (restPattern.startsWith("*")) {
-    return matchZeroOrMore(line, token, restPattern.slice(1), captures);
-  }
-
-  if (restPattern.startsWith("?")) {
-    return matchZeroOrOne(line, token, restPattern.slice(1), captures);
-  }
-
-  if (restPattern.startsWith("{")) {
-    const end = restPattern.indexOf("}");
-    if (end !== -1) {
-      const content = restPattern.slice(1, end);
-      if (content.includes(",")) {
-        const parts = content.split(",");
-        const minTimes = parseInt(parts[0], 10);
-        if (!isNaN(minTimes)) {
-          if (parts[1] === "") {
-            return matchAtLeast(line, token, minTimes, restPattern.slice(end + 1), captures);
-          } else {
-            const maxTimes = parseInt(parts[1], 10);
-            if (!isNaN(maxTimes)) {
-              return matchRange(line, token, minTimes, maxTimes, restPattern.slice(end + 1), captures);
-            }
-          }
-        }
-      } else {
-        const times = parseInt(content, 10);
-        if (!isNaN(times)) {
-          return matchTimes(line, token, times, restPattern.slice(end + 1), captures);
-        }
-      }
-    }
-  }
-
-  if (line.length > 0 && matchChar(line[0], token)) {
-    const remainingLength = matchHere(line.slice(1), restPattern, captures);
-    if (remainingLength !== null) {
-      return 1 + remainingLength;
-    }
-  }
-
-  return null;
-}
-
-function matchChar(char, token) {
-  if (token === ".") return char !== "\n";
-
-  if (token.startsWith("[")) {
-    const content = token.slice(1, -1);
-    if (content.startsWith("^")) {
-      return !content.slice(1).includes(char);
-    }
-    return content.includes(char);
-  }
-
-  if (token.startsWith("\\")) {
-    const type = token[1];
-    if (type === "d") return char >= "0" && char <= "9";
-    if (type === "w") return (char >= "a" && char <= "z") ||
-      (char >= "A" && char <= "Z") ||
-      (char >= "0" && char <= "9") ||
-      char === "_";
-    return char === type;
-  }
-
-  return char === token;
-}
-
-function matchToken(line, token, captures = []) {
-  if (line.length === 0) return null;
-
-  if (token.startsWith("(")) {
-    const content = token.slice(1, -1);
-    const options = content.split("|");
-    for (const option of options) {
-      // Check if option matches at start of line
-      const len = matchHere(line, option, captures);
-      // Logic explanation: matchHere with just the option checks if the line starts with the option pattern.
-      // It returns the length consumed by the pattern if it matches (because recursive base case returns 0).
-      if (len !== null) return len;
-    }
-    return null;
-  }
-
-  // Single char token match check
-  // For character classes or literals, length is always 1 if matchChar returns true
-  if (matchChar(line[0], token)) {
-    return 1;
-  }
-  return null;
-}
-
-function matchOneOrMore(line, token, remainingPattern, captures) {
-  const matches = [];
-  let matchedParams = [];
-  let currentLine = line;
-  let totalLen = 0;
-
-  while (true) {
-    const len = matchToken(currentLine, token, captures);
-    if (len === null) break;
-    if (len === 0) break; // Avoid infinite loop
-    matches.push(len);
-    totalLen += len;
-    currentLine = currentLine.slice(len);
-    matchedParams.push(totalLen);
-  }
-
-  for (let i = matches.length; i >= 1; i--) {
-    const currentTotalLen = matchedParams[i - 1];
-    const remainingLength = matchHere(line.slice(currentTotalLen), remainingPattern, captures);
-    if (remainingLength !== null) {
-      return currentTotalLen + remainingLength;
-    }
-  }
-
-  return null;
-}
-
-function matchZeroOrMore(line, token, remainingPattern, captures) {
-  const matches = [];
-  let matchedParams = [];
-  let currentLine = line;
-  let totalLen = 0;
-
-  while (true) {
-    const len = matchToken(currentLine, token, captures);
-    if (len === null) break;
-    // Prevent infinite loop if token matches empty string (e.g. empty group or *)
-    // Standard regex behavior: if a repetition matches empty string, it stops or advances carefully.
-    // Here, if len is 0, we are not consuming anything, so next iteration will be same state -> infinite loop.
-    if (len === 0) break;
-
-    matches.push(len);
-    totalLen += len;
-    matchedParams.push(totalLen);
-    currentLine = currentLine.slice(len);
-  }
-
-  for (let i = matches.length; i >= 0; i--) {
-    const currentTotalLen = i === 0 ? 0 : matchedParams[i - 1];
-    const remainingLength = matchHere(line.slice(currentTotalLen), remainingPattern, captures);
-    if (remainingLength !== null) {
-      return currentTotalLen + remainingLength;
-    }
-  }
-
-  return null;
-}
-
-function matchAtLeast(line, token, minTimes, remainingPattern, captures) {
-  let currentLine = line;
-  let totalLen = 0;
-
-  // First match exactly minTimes
-  for (let i = 0; i < minTimes; i++) {
-    const len = matchToken(currentLine, token, captures);
-    if (len === null) return null;
-    totalLen += len;
-    currentLine = currentLine.slice(len);
-  }
-
-  // Then match zero or more of same token on the remaining string
-  // Reuse matchZeroOrMore logic but we need to return TOTAL length including the prefix
-  // matchZeroOrMore returns length or null.
-
-  const suffixLength = matchZeroOrMore(currentLine, token, remainingPattern, captures);
-  if (suffixLength !== null) {
-    return totalLen + suffixLength;
-  }
-
-  return null;
-}
-
-function matchRange(line, token, minTimes, maxTimes, remainingPattern, captures) {
-  let currentLine = line;
-  let totalLen = 0;
-
-  // First match exactly minTimes
-  for (let i = 0; i < minTimes; i++) {
-    const len = matchToken(currentLine, token, captures);
-    if (len === null) return null;
-    totalLen += len;
-    currentLine = currentLine.slice(len);
-  }
-
-  // Now match UP TO (maxTimes - minTimes) more, with backtracking
-  const additionalMax = maxTimes - minTimes;
-  const matches = [];
-  let matchedParams = [];
-  let suffixLine = currentLine;
-  let suffixTotalLen = 0;
-
-  // Collect up to additionalMax matches
-  for (let i = 0; i < additionalMax; i++) {
-    const len = matchToken(suffixLine, token, captures);
-    if (len === null) break;
-    if (len === 0) break; // Avoid infinite loop
-
-    matches.push(len);
-    suffixTotalLen += len;
-    matchedParams.push(suffixTotalLen);
-    suffixLine = suffixLine.slice(len);
-  }
-
-  // Backtrack from most matches down to 0
-  for (let i = matches.length; i >= 0; i--) {
-    const currentSuffixLen = i === 0 ? 0 : matchedParams[i - 1];
-    const remainingLength = matchHere(currentLine.slice(currentSuffixLen), remainingPattern, captures);
-    if (remainingLength !== null) {
-      return totalLen + currentSuffixLen + remainingLength;
-    }
-  }
-
-  return null;
-}
-
-function matchTimes(line, token, times, remainingPattern, captures) {
-  let currentLine = line;
-  let totalLen = 0;
-
-  for (let i = 0; i < times; i++) {
-    const len = matchToken(currentLine, token, captures);
-    if (len === null) return null;
-    totalLen += len;
-    currentLine = currentLine.slice(len);
-  }
-
-  const remainingLength = matchHere(currentLine, remainingPattern, captures);
-  if (remainingLength !== null) {
-    return totalLen + remainingLength;
-  }
-  return null;
-}
-
-function matchZeroOrOne(line, token, remainingPattern, captures) {
-  const len = matchToken(line, token, captures);
-  if (len !== null) {
-    const remainingLength = matchHere(line.slice(len), remainingPattern, captures);
-    if (remainingLength !== null) {
-      return len + remainingLength;
-    }
-  }
-  return matchHere(line, remainingPattern, captures);
-}
+const path = require("path");
 
 function main() {
   const args = process.argv.slice(2);
@@ -375,7 +25,6 @@ function main() {
       pattern = args[i + 1];
       i++; // Skip pattern
     } else {
-      // Only treat as file path if it's not a known flag check skip
       if (!arg.startsWith("-")) {
         filePaths.push(arg);
       }
@@ -383,121 +32,418 @@ function main() {
   }
 
   if (!pattern) {
-    console.log("Expected -E");
+    console.error("Expected -E");
     process.exit(1);
   }
 
-  // You can use print statements as follows for debugging, they'll be visible when running tests.
-  console.error("Logs from your program will appear here");
+  // Collect input lines
+  let inputLines = []; // { text, source }
+  
+  if (filePaths.length === 0) {
+      // Stdin
+       try {
+        const content = fs.readFileSync(0, "utf-8");
+        const lines = content.split("\n");
+        for (const line of lines) {
+             inputLines.push({ text: line, source: "(standard input)" });
+        }
+      } catch (e) {
+        // Empty stdin
+      }
+  } else {
+      // Files (recursive support)
+      const expandedPaths = [];
+      
+      const processPath = (p) => {
+          try {
+              const stats = fs.statSync(p);
+              if (stats.isDirectory()) {
+                  if (recursive) {
+                      const items = fs.readdirSync(p);
+                      for (const item of items) {
+                          processPath(path.join(p, item));
+                      }
+                  } else {
+                      console.error(`grep: ${p}: Is a directory`);
+                  }
+              } else {
+                  expandedPaths.push(p);
+              }
+          } catch(e) {
+              console.error(`grep: ${p}: No such file or directory`);
+          }
+      };
+      
+      for (const p of filePaths) {
+          processPath(p);
+      }
+      
+      // Read lines
+      for (const p of expandedPaths) {
+          try {
+              const content = fs.readFileSync(p, "utf-8");
+              const lines = content.split("\n");
+               // Handle trailing empty line from split
+              if (content.endsWith("\n") && lines[lines.length - 1] === "") {
+                  lines.pop();
+              }
+              for (const line of lines) {
+                  inputLines.push({ text: line, source: p });
+              }
+          } catch (e) {
+              console.error(e.message);
+          }
+      }
+  }
+  
+  // Parse AST
+  let ast;
+  try {
+      ast = parsePattern(pattern);
+  } catch(e) {
+      console.error("Invalid Regex:", e.message);
+      process.exit(1);
+  }
 
   let anyMatch = false;
+  const showSource = (filePaths.length > 0 && recursive) || (filePaths.length > 1);
 
-  // If no files provided, read from stdin (unless recursive, which requires path)
-  if (filePaths.length === 0) {
-    if (!recursive) {
-      filePaths.push(0); // 0 is file descriptor for stdin
-    }
-  }
-
-  const expandedFilePaths = [];
-
-  const processPath = (path) => {
-    try {
-      // If it's stdin (0), just add it
-      if (path === 0) {
-        expandedFilePaths.push(0);
-        return;
-      }
-
-      const stats = fs.statSync(path);
-      if (stats.isDirectory()) {
-        if (recursive) {
-          const items = fs.readdirSync(path);
-          for (const item of items) {
-            // Join path - rudimentary, assume / or \ handled by FS or construct correctly
-            // In node "path" module safer, but let's try simple concat with / if needed
-            // path.join would be better but trying to stick to minimal imports if possible
-            // or just require "path"
-            const fullPath = path.endsWith("/") || path.endsWith("\\") ? path + item : path + "/" + item;
-            processPath(fullPath);
-          }
-        } else {
-          console.error(`${path}: Is a directory`);
-        }
-      } else {
-        expandedFilePaths.push(path);
-      }
-    } catch (e) {
-      console.error(e.message);
-    }
-  };
-
-  for (const p of filePaths) {
-    processPath(p);
-  }
-
-  // Logic: if multiple files OR recursive search on directory, show prefix?
-  // Standard grep: single file (explicit) -> no prefix. 
-  // multiple files -> prefix. 
-  // directory (-r) -> always prefix files found inside.
-
-  const showFilename = expandedFilePaths.length > 1 || recursive;
-
-  for (const filePath of expandedFilePaths) {
-    let input = "";
-    try {
-      input = fs.readFileSync(filePath, "utf-8");
-    } catch (e) {
-      console.error(e.message);
-      continue;
-    }
-
-    const lines = input.split("\n");
-    if (input.endsWith("\n")) {
-      lines.pop();
-    }
-
-    for (const line of lines) {
-      const matches = matchPattern(line, pattern);
+  for (const { text: line, source } of inputLines) {
+      const matches = findMatches(line, ast);
+      
       if (matches.length > 0) {
-        // Fix prefix logic: only skip if explicitly single file arg and NOT recursive expansion
-        // But "expandedFilePaths.length > 1" usually covers specific files. 
-        // Recursive usually implies we want filenames.
-        // Let's stick to "showFilename" calculated above.
-
-        const prefix = (showFilename && typeof filePath === 'string') ? `${filePath}:` : "";
-
-        if (printOnly) {
-          for (const m of matches) {
-            console.log(`${prefix}${m.match}`);
-          }
-        } else {
-          if (useColor) {
-            let result = "";
-            let lastIndex = 0;
-            for (const m of matches) {
-              if (m.start >= lastIndex) {
-                result += line.slice(lastIndex, m.start);
-                result += `\x1b[1;31m${m.match}\x1b[0m`;
-                lastIndex = m.end;
+          anyMatch = true;
+          
+          if (printOnly) {
+              for (const m of matches) {
+                   if (showSource) console.log(`${source}:${m.match}`);
+                   else console.log(m.match);
               }
-            }
-            result += line.slice(lastIndex);
-            console.log(`${prefix}${result}`);
           } else {
-            console.log(`${prefix}${line}`);
+              // Construct output
+              let output = line;
+              if (useColor) {
+                  let parts = [];
+                  let lastIndex = 0;
+                  // Ensure matches are sorted and undefined/overlapping handled?
+                  // findMatches returns sequential greedy matches.
+                  for (const m of matches) {
+                      if (m.start >= lastIndex) {
+                          parts.push(line.slice(lastIndex, m.start));
+                          parts.push(`\x1b[31m${m.match}\x1b[0m`);
+                          lastIndex = m.end;
+                      }
+                  }
+                  parts.push(line.slice(lastIndex));
+                  output = parts.join("");
+              }
+              
+              if (showSource) console.log(`${source}:${output}`);
+              else console.log(output);
           }
-        }
-        anyMatch = true;
       }
-    }
   }
+  
+  process.exit(anyMatch ? 0 : 1);
+}
 
-  if (anyMatch) {
-    process.exit(0);
-  } else {
-    process.exit(1);
-  }
+// --- AST Parser ---
+
+function parsePattern(pattern) {
+    let pos = 0;
+    let groupIdCounter = 1;
+    
+    function peek() { return pattern[pos]; }
+    function consume() { return pattern[pos++]; }
+    function match(char) { if (peek() === char) { consume(); return true; } return false; }
+    
+    function parseSequenceContext() {
+        const elements = [];
+        while (pos < pattern.length) {
+            if (peek() === '|' || peek() === ')') break;
+            elements.push(parseAtom());
+        }
+        if (elements.length === 1) return elements[0];
+        return { type: 'Sequence', elements };
+    }
+    
+    function parseAlternationContext() {
+        const left = parseSequenceContext();
+        if (match('|')) {
+            const right = parseAlternationContext();
+            return { type: 'Alternation', left, right };
+        }
+        return left;
+    }
+    
+    function parseAtom() {
+        let base;
+        const char = peek();
+        
+        if (char === '(') {
+            consume();
+            const id = groupIdCounter++;
+            const inner = parseAlternationContext();
+            if (!match(')')) throw new Error("Unmatched (");
+            base = { type: 'Group', number: id, inner };
+        } else if (char === '[') {
+            consume();
+            let inverted = false;
+            if (match('^')) inverted = true;
+            let inclusions = "";
+            while (pos < pattern.length && peek() !== ']') {
+                 inclusions += consume();
+            }
+            if (!match(']')) throw new Error("Unmatched [");
+            base = { type: 'CharClass', inverted, inclusions };
+        } else if (char === '\\') {
+            consume();
+            const special = consume();
+            if (special >= '1' && special <= '9') {
+                base = { type: 'Backref', index: parseInt(special) };
+            } else if (special === 'd' || special === 'w') {
+                base = { type: 'SpecialClass', value: special };
+            } else {
+                base = { type: 'Literal', value: special };
+            }
+        } else if (char === '.') {
+            consume();
+            base = { type: 'Dot' };
+        } else if (char === '^') {
+            consume();
+            base = { type: 'AnchorStart' };
+        } else if (char === '$') {
+            consume();
+            base = { type: 'AnchorEnd' };
+        } else {
+            base = { type: 'Literal', value: consume() };
+        }
+        
+        // Check Quantifier
+        if (pos < pattern.length) {
+            const q = peek();
+            if (q === '+') {
+                consume();
+                return { type: 'Quantifier', inner: base, min: 1, max: Infinity };
+            } else if (q === '*') {
+                consume();
+                return { type: 'Quantifier', inner: base, min: 0, max: Infinity };
+            } else if (q === '?') {
+                consume();
+                return { type: 'Quantifier', inner: base, min: 0, max: 1 };
+            } else if (q === '{') {
+                consume();
+                // Parse range
+                const start = pos;
+                while (pos < pattern.length && peek() !== '}') pos++;
+                const content = pattern.slice(start, pos);
+                consume(); // }
+                
+                if (content.includes(',')) {
+                    const parts = content.split(',');
+                    const min = parseInt(parts[0]);
+                    const maxPart = parts[1];
+                    const max = maxPart === "" ? Infinity : parseInt(maxPart);
+                    return { type: 'Quantifier', inner: base, min, max };
+                } else {
+                    const times = parseInt(content);
+                    return { type: 'Quantifier', inner: base, min: times, max: times };
+                }
+            }
+        }
+        
+        return base;
+    }
+    
+    // Initial parse
+    return parseAlternationContext();
+}
+
+// --- Matcher ---
+
+function findMatches(line, ast) {
+    const matches = [];
+    
+    if (ast.type === 'AnchorStart') {
+        const res = matchSequence(line, [ast.inner || ast], 0, []); // AnchorStart usually wraps nothing or is just a node.
+        // Wait, AST structure: if pattern is ^abc, parseAlternation return Sequence[AnchorStart, Literal...]
+        // MatchSequence handles AnchorStart node effectively effectively by returning length 0 if at 0.
+        
+        if (ast.type === 'Sequence' && ast.elements[0].type === 'AnchorStart') {
+             // Optimized path?
+             // Just fall through to normal scan
+        }
+    }
+    
+    // Scan line
+    let i = 0;
+    while (i <= line.length) {
+        // Prepare to match from i. 
+        // We pass AST node.
+        
+        // We need a helper to start matching a node? 
+        // matchSequence expects (line, nodes, offset, captures).
+        // If AST is Sequence, pass elements. Else pass [ast].
+        
+        const nodes = (ast.type === 'Sequence') ? ast.elements : [ast];
+        const res = matchSequence(line, nodes, i, []);
+        
+        if (res) {
+             matches.push({ start: i, end: i + res.length, match: line.slice(i, i + res.length) });
+             if (res.length > 0) i += res.length;
+             else i++;
+        } else {
+             i++;
+        }
+    }
+    return matches;
+}
+
+function matchSequence(line, nodes, offset, captures) {
+    if (nodes.length === 0) return { length: 0, captures };
+    
+    const [head, ...tail] = nodes;
+    
+    if (head.type === 'Quantifier') {
+        const min = head.min;
+        const max = head.max;
+        const inner = head.inner;
+        
+        let possibleMatches = []; 
+        let currentOffset = offset;
+        let currentCaptures = [...captures];
+        let count = 0;
+        
+        // Match Min
+        while (count < min) {
+             const res = matchSingleNode(line, inner, currentOffset, currentCaptures);
+             if (!res) return null;
+             possibleMatches.push(res);
+             currentOffset += res.length;
+             currentCaptures = res.captures;
+             count++;
+        }
+        
+        // Match Extra (Greedy)
+        const mandatoryMatches = [...possibleMatches];
+        const mandatoryOffset = currentOffset;
+        const mandatoryCaptures = currentCaptures;
+        
+        const extraMatches = [];
+        while (count < max) {
+             const res = matchSingleNode(line, inner, currentOffset, currentCaptures);
+             if (!res) break;
+             if (res.length === 0) break; // Infinite loop protection
+             extraMatches.push(res);
+             currentOffset += res.length;
+             currentCaptures = res.captures;
+             count++;
+        }
+        
+        // Backtrack
+        for (let i = extraMatches.length; i >= 0; i--) {
+            // Reconstruct state
+            let myOffset = mandatoryOffset;
+            let myCaptures = mandatoryCaptures;
+            for (let k = 0; k < i; k++) {
+                myOffset += extraMatches[k].length;
+                myCaptures = extraMatches[k].captures;
+            }
+            
+            const tailRes = matchSequence(line, tail, myOffset, myCaptures);
+            if (tailRes) {
+                 return { length: (myOffset - offset) + tailRes.length, captures: tailRes.captures };
+            }
+        }
+        return null;
+        
+    } else if (head.type === 'Alternation') {
+        // Left | Right
+        const leftNodes = (head.left.type === 'Sequence') ? head.left.elements : [head.left];
+        const resLeft = matchSequence(line, [...leftNodes, ...tail], offset, captures);
+        if (resLeft) return resLeft;
+        
+        const rightNodes = (head.right.type === 'Sequence') ? head.right.elements : [head.right];
+        return matchSequence(line, [...rightNodes, ...tail], offset, captures);
+        
+    } else {
+        // Atomic
+        const res = matchSingleNode(line, head, offset, captures);
+        if (res) {
+            const tailRes = matchSequence(line, tail, offset + res.length, res.captures);
+            if (tailRes) {
+                return { length: res.length + tailRes.length, captures: tailRes.captures };
+            }
+        }
+        return null; 
+    }
+}
+
+function matchSingleNode(line, node, offset, captures) {
+    if (offset > line.length) return null;
+    const remaining = line.slice(offset);
+    
+    switch(node.type) {
+        case 'Group': {
+            const innerNodes = (node.inner.type === 'Sequence') ? node.inner.elements : [node.inner];
+            const res = matchSequence(line, innerNodes, offset, captures);
+            if (res) {
+                const capturedStr = line.slice(offset, offset + res.length);
+                const newCaps = [...res.captures];
+                newCaps[node.number - 1] = capturedStr;
+                return { length: res.length, captures: newCaps };
+            }
+            return null;
+        }
+        case 'Literal':
+            if (remaining.startsWith(node.value)) return { length: node.value.length, captures };
+            return null;
+        case 'Dot':
+             if (remaining.length > 0 && remaining[0] !== '\n') return { length: 1, captures };
+             return null;
+        case 'CharClass':
+             if (remaining.length > 0) {
+                 const char = remaining[0];
+                 let matched = node.inclusions.includes(char);
+                 if (node.inverted) matched = !matched;
+                 if (matched) return { length: 1, captures };
+             }
+             return null;
+        case 'SpecialClass':
+             if (remaining.length > 0) {
+                 const char = remaining[0];
+                 let matched = false;
+                 if (node.value === 'd') matched = (char >= '0' && char <= '9');
+                 else if (node.value === 'w') matched = (char >= 'a' && char <= 'z') || (char >= 'A' && char <= 'Z') || (char >= '0' && char <= '9') || char === '_';
+                 if (matched) return { length: 1, captures };
+             }
+             return null;
+        case 'Backref': {
+             const index = node.index - 1;
+             if (index >= 0 && index < captures.length && captures[index] !== undefined) {
+                 const expected = captures[index];
+                 if (remaining.startsWith(expected)) return { length: expected.length, captures };
+             }
+             return null;
+        }
+        case 'AnchorStart':
+             if (offset === 0) return { length: 0, captures };
+             return null;
+        case 'AnchorEnd':
+             if (offset === line.length) return { length: 0, captures };
+             return null;
+        case 'Sequence':
+             return matchSequence(line, node.elements, offset, captures);
+        case 'Alternation': {
+             // Should verify this path? matchSingleNode usually called on Atom.
+             // Alternation inside a Group is handled by Group->Sequence logic?
+             // If Group has Alternation direct child: Group -> Alternation. 
+             // matchSingleNode(Group) calls matchSequence([Alternation]).
+             // matchSequence sees Alternation head. Handles it.
+             return matchSequence(line, [node], offset, captures); 
+        }
+    }
+    return null;
 }
 
 main();

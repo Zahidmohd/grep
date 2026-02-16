@@ -82,6 +82,16 @@ function matchHere(line, pattern) {
     return matchZeroOrOne(line, token, restPattern.slice(1));
   }
 
+  if (restPattern.startsWith("{")) {
+    const end = restPattern.indexOf("}");
+    if (end !== -1) {
+      const times = parseInt(restPattern.slice(1, end), 10);
+      if (!isNaN(times)) {
+        return matchTimes(line, token, times, restPattern.slice(end + 1));
+      }
+    }
+  }
+
   if (line.length > 0 && matchChar(line[0], token)) {
     const remainingLength = matchHere(line.slice(1), restPattern);
     if (remainingLength !== null) {
@@ -153,6 +163,22 @@ function matchZeroOrMore(line, token, remainingPattern) {
     i--;
   }
 
+  return null;
+}
+
+function matchTimes(line, token, times, remainingPattern) {
+  let i = 0;
+  while (i < times) {
+    if (i >= line.length || !matchChar(line[i], token)) {
+      return null; // Not enough matches
+    }
+    i++;
+  }
+
+  const remainingLength = matchHere(line.slice(i), remainingPattern);
+  if (remainingLength !== null) {
+    return i + remainingLength;
+  }
   return null;
 }
 

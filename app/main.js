@@ -181,11 +181,16 @@ function main() {
       useColor = true;
     } else if (arg === "--color=auto") {
       useColor = !!process.stdout.isTTY;
+    } else if (arg === "--color=never") {
+      useColor = false;
     } else if (arg === "-E") {
       pattern = args[i + 1];
       i++; // Skip pattern
     } else {
-      filePath = arg;
+      // Only treat as file path if it's not a known flag check skip
+      if (!arg.startsWith("-")) {
+        filePath = arg;
+      }
     }
   }
 

@@ -74,6 +74,10 @@ function matchHere(line, pattern) {
     return matchOneOrMore(line, token, restPattern.slice(1));
   }
 
+  if (restPattern.startsWith("*")) {
+    return matchZeroOrMore(line, token, restPattern.slice(1));
+  }
+
   if (restPattern.startsWith("?")) {
     return matchZeroOrOne(line, token, restPattern.slice(1));
   }
@@ -133,6 +137,25 @@ function matchOneOrMore(line, token, remainingPattern) {
   return null;
 }
 
+function matchZeroOrMore(line, token, remainingPattern) {
+  let i = 0;
+  // Greedy match
+  while (i < line.length && matchChar(line[i], token)) {
+    i++;
+  }
+
+  // Backtrack
+  while (i >= 0) {
+    const remainingLength = matchHere(line.slice(i), remainingPattern);
+    if (remainingLength !== null) {
+      return i + remainingLength;
+    }
+    i--;
+  }
+
+  return null;
+}
+
 function matchZeroOrOne(line, token, remainingPattern) {
   if (line.length > 0 && matchChar(line[0], token)) {
     const remainingLength = matchHere(line.slice(1), remainingPattern);
@@ -148,26 +171,40 @@ function main() {
   let printOnly = false;
   let pattern = "";
   let useColor = false;
+  let filePath = null;
 
-  if (args.includes("-o")) {
-    printOnly = true;
+  for (let i = 0; i < args.length; i++) {
+    const arg = args[i];
+    if (arg === "-o") {
+      printOnly = true;
+    } else if (arg === "--color=always") {
+      useColor = true;
+    } else if (arg === "--color=auto") {
+      useColor = !!process.stdout.isTTY;
+    } else if (arg === "-E") {
+      pattern = args[i + 1];
+      i++; // Skip pattern
+    } else {
+      filePath = arg;
+    }
   }
 
-  if (args.includes("--color=always")) {
-    useColor = true;
-  } else if (args.includes("--color=auto")) {
-    useColor = !!process.stdout.isTTY;
-  }
-
-  const eIndex = args.indexOf("-E");
-  if (eIndex !== -1 && eIndex + 1 < args.length) {
-    pattern = args[eIndex + 1];
-  } else {
+  if (!pattern) {
     console.log("Expected -E");
     process.exit(1);
   }
 
-  const input = fs.readFileSync(0, "utf-8");
+  let input = "";
+  try {
+    if (filePath) {
+      input = fs.readFileSync(filePath, "utf-8");
+    } else {
+      input = fs.readFileSync(0, "utf-8");
+    }
+  } catch (e) {
+    console.error(e.message);
+    process.exit(1);
+  }
 
   // You can use print statements as follows for debugging, they'll be visible when running tests.
   console.error("Logs from your program will appear here");
@@ -213,4 +250,5 @@ function main() {
     process.exit(1);
   }
 }
+
 main();

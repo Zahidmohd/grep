@@ -227,13 +227,48 @@ const solve = (i, j_start, j_end, inputLine, pattern, captures) => {
     const quant = (endBracket + 1 < pattern.length) ? pattern[endBracket + 1] : null;
     const hasPlus = quant === '+';
     const hasQuestion = quant === '?';
-    const next_j = endBracket + (hasPlus || hasQuestion ? 2 : 1);
+    const hasBrace = quant === '{';
 
     let str = pattern.slice(j + 1, endBracket);
     const isNegated = str[0] === '^';
     if (isNegated) str = str.slice(1);
 
     const check = (char) => isNegated ? !str.includes(char) : str.includes(char);
+
+    // Handle {n,m} for character class
+    if (hasBrace) {
+      let closeBrace = pattern.indexOf('}', endBracket + 1);
+      if (closeBrace !== -1) {
+        const rangeStr = pattern.slice(endBracket + 2, closeBrace);
+        let min, max;
+        if (rangeStr.includes(',')) {
+          const parts = rangeStr.split(',');
+          min = parseInt(parts[0]);
+          max = parts[1] === '' ? Infinity : parseInt(parts[1]);
+        } else {
+          min = max = parseInt(rangeStr);
+        }
+
+        const next_j = closeBrace + 1;
+
+        // Count how many characters match the class
+        let matchCount = 0;
+        while (i + matchCount < inputLine.length && check(inputLine[i + matchCount])) {
+          matchCount++;
+        }
+
+        if (matchCount < min) return null;
+
+        const actualMax = Math.min(matchCount, max);
+        for (let k = actualMax; k >= min; k--) {
+          const res = solve(i + k, next_j, j_end, inputLine, pattern, captures);
+          if (res) return res;
+        }
+        return null;
+      }
+    }
+
+    const next_j = endBracket + (hasPlus || hasQuestion ? 2 : 1);
 
     if (hasPlus) {
       if (i >= inputLine.length || !check(inputLine[i])) return null;

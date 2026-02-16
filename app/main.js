@@ -171,7 +171,7 @@ function main() {
   let printOnly = false;
   let pattern = "";
   let useColor = false;
-  let filePath = null;
+  let filePaths = [];
 
   for (let i = 0; i < args.length; i++) {
     const arg = args[i];
@@ -189,7 +189,7 @@ function main() {
     } else {
       // Only treat as file path if it's not a known flag check skip
       if (!arg.startsWith("-")) {
-        filePath = arg;
+        filePaths.push(arg);
       }
     }
   }
@@ -199,53 +199,61 @@ function main() {
     process.exit(1);
   }
 
-  let input = "";
-  try {
-    if (filePath) {
-      input = fs.readFileSync(filePath, "utf-8");
-    } else {
-      input = fs.readFileSync(0, "utf-8");
-    }
-  } catch (e) {
-    console.error(e.message);
-    process.exit(1);
-  }
-
   // You can use print statements as follows for debugging, they'll be visible when running tests.
   console.error("Logs from your program will appear here");
 
-  const lines = input.split("\n");
-  if (input.endsWith("\n")) {
-    lines.pop();
-  }
-
   let anyMatch = false;
 
-  for (const line of lines) {
-    const matches = matchPattern(line, pattern);
-    if (matches.length > 0) {
-      if (printOnly) {
-        for (const m of matches) {
-          console.log(m.match);
-        }
-      } else {
-        if (useColor) {
-          let result = "";
-          let lastIndex = 0;
+  // If no files provided, read from stdin
+  if (filePaths.length === 0) {
+    filePaths.push(0); // 0 is file descriptor for stdin
+  }
+
+  const multipleFiles = filePaths.length > 1;
+
+  for (const filePath of filePaths) {
+    let input = "";
+    try {
+      input = fs.readFileSync(filePath, "utf-8");
+    } catch (e) {
+      console.error(e.message);
+      continue;
+    }
+
+    const lines = input.split("\n");
+    // Only remove trailing newline if it's not stdin (stdin stream behavior might differ, but generally consistent)
+    if (input.endsWith("\n")) {
+      lines.pop();
+    }
+
+    for (const line of lines) {
+      const matches = matchPattern(line, pattern);
+      if (matches.length > 0) {
+        const prefix = (multipleFiles && typeof filePath === 'string') ? `${filePath}:` : "";
+
+        if (printOnly) {
           for (const m of matches) {
-            if (m.start >= lastIndex) {
-              result += line.slice(lastIndex, m.start);
-              result += `\x1b[1;31m${m.match}\x1b[0m`;
-              lastIndex = m.end;
-            }
+            console.log(`${prefix}${m.match}`);
           }
-          result += line.slice(lastIndex);
-          console.log(result);
         } else {
-          console.log(line);
+          if (useColor) {
+            let result = "";
+            let lastIndex = 0;
+            for (const m of matches) {
+              if (m.start >= lastIndex) {
+                result += line.slice(lastIndex, m.start);
+                result += `\x1b[1;31m${m.match}\x1b[0m`;
+                lastIndex = m.end;
+              }
+            }
+            result += line.slice(lastIndex);
+            console.log(`${prefix}${result}`);
+          } else {
+            console.log(`${prefix}${line}`);
+          }
         }
+        anyMatch = true;
       }
-      anyMatch = true;
     }
   }
 

@@ -315,6 +315,7 @@ const solve = (i, j_start, j_end, inputLine, pattern, captures) => {
     const quant = (afterGroupIdx < pattern.length) ? pattern[afterGroupIdx] : null;
     const hasPlusAfterGroup = quant === '+';
     const hasQuestionAfterGroup = quant === '?';
+    const hasStarAfterGroup = quant === '*';
     const hasBraceAfterGroup = quant === '{';
 
     // Handle {n,m} quantifier for groups

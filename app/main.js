@@ -88,9 +88,16 @@ function matchHere(line, pattern) {
       const content = restPattern.slice(1, end);
       if (content.includes(",")) {
         const parts = content.split(",");
-        const times = parseInt(parts[0], 10);
-        if (!isNaN(times)) {
-          return matchAtLeast(line, token, times, restPattern.slice(end + 1));
+        const minTimes = parseInt(parts[0], 10);
+        if (!isNaN(minTimes)) {
+          if (parts[1] === "") {
+            return matchAtLeast(line, token, minTimes, restPattern.slice(end + 1));
+          } else {
+            const maxTimes = parseInt(parts[1], 10);
+            if (!isNaN(maxTimes)) {
+              return matchRange(line, token, minTimes, maxTimes, restPattern.slice(end + 1));
+            }
+          }
         }
       } else {
         const times = parseInt(content, 10);
@@ -236,6 +243,49 @@ function matchAtLeast(line, token, minTimes, remainingPattern) {
   const suffixLength = matchZeroOrMore(currentLine, token, remainingPattern);
   if (suffixLength !== null) {
     return totalLen + suffixLength;
+  }
+
+  return null;
+}
+
+function matchRange(line, token, minTimes, maxTimes, remainingPattern) {
+  let currentLine = line;
+  let totalLen = 0;
+
+  // First match exactly minTimes
+  for (let i = 0; i < minTimes; i++) {
+    const len = matchToken(currentLine, token);
+    if (len === null) return null;
+    totalLen += len;
+    currentLine = currentLine.slice(len);
+  }
+
+  // Now match UP TO (maxTimes - minTimes) more, with backtracking
+  const additionalMax = maxTimes - minTimes;
+  const matches = [];
+  let matchedParams = [];
+  let suffixLine = currentLine;
+  let suffixTotalLen = 0;
+
+  // Collect up to additionalMax matches
+  for (let i = 0; i < additionalMax; i++) {
+    const len = matchToken(suffixLine, token);
+    if (len === null) break;
+    if (len === 0) break; // Avoid infinite loop
+
+    matches.push(len);
+    suffixTotalLen += len;
+    matchedParams.push(suffixTotalLen);
+    suffixLine = suffixLine.slice(len);
+  }
+
+  // Backtrack from most matches down to 0
+  for (let i = matches.length; i >= 0; i--) {
+    const currentSuffixLen = i === 0 ? 0 : matchedParams[i - 1];
+    const remainingLength = matchHere(currentLine.slice(currentSuffixLen), remainingPattern);
+    if (remainingLength !== null) {
+      return totalLen + currentSuffixLen + remainingLength;
+    }
   }
 
   return null;

@@ -170,9 +170,10 @@ function main() {
         const startCtx = Math.max(0, lineIdx - contextLines);
 
         if (lastPrintedLine !== -1 && startCtx > lastPrintedLine + 1) {
-          // Check if we are in same file before printing separator?
-          // Standard grep prints "--" between disjoint groups.
-          console.log("--");
+          const prevSource = inputLines[lastPrintedLine].source;
+          if (prevSource === source) {
+            console.log("--");
+          }
         }
 
         for (let k = startCtx; k < lineIdx; k++) {

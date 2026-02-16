@@ -369,7 +369,7 @@ const solve = (i, j_start, j_end, inputLine, pattern, captures) => {
       }
     }
 
-    const next_j_after_group = endParenIndex + (hasPlusAfterGroup || hasQuestionAfterGroup ? 2 : 1);
+    const next_j_after_group = endParenIndex + (hasPlusAfterGroup || hasQuestionAfterGroup || hasStarAfterGroup ? 2 : 1);
 
     // Non-repeated, non-optional group
     if (!hasPlusAfterGroup && !hasQuestionAfterGroup && !hasStarAfterGroup) {

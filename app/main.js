@@ -511,10 +511,71 @@ const solve = (i, j_start, j_end, inputLine, pattern, captures) => {
     }
   }
 
-  // Literal character with quantifier
+  // Check for {n,m} quantifier on literals, character classes, etc.
   const nextPatChar = (j + 1 < pattern.length) ? pattern[j + 1] : null;
+  if (nextPatChar === '{') {
+    // Parse {n,m} or {n}
+    let closeBrace = pattern.indexOf('}', j + 1);
+    if (closeBrace !== -1) {
+      const rangeStr = pattern.slice(j + 2, closeBrace);
+      let min, max;
+      if (rangeStr.includes(',')) {
+        const parts = rangeStr.split(',');
+        min = parseInt(parts[0]);
+        max = parts[1] === '' ? Infinity : parseInt(parts[1]);
+      } else {
+        min = max = parseInt(rangeStr);
+      }
+
+      const next_j_after = closeBrace + 1;
+
+      // What are we quantifying?
+      let matchFunc;
+      if (pattern[j] === '.') {
+        matchFunc = (pos) => pos < inputLine.length;
+      } else if (pattern[j] === '\\' && j + 1 < pattern.length) {
+        const escCh = pattern[j + 1];
+        if (escCh === 'd') {
+          matchFunc = (pos) => pos < inputLine.length && /[0-9]/.test(inputLine[pos]);
+        } else if (escCh === 'w') {
+          matchFunc = (pos) => pos < inputLine.length && isWordChar(inputLine[pos]);
+        } else if (escCh === 's') {
+          matchFunc = (pos) => pos < inputLine.length && /\s/.test(inputLine[pos]);
+        } else {
+          // Escaped literal
+          matchFunc = (pos) => pos < inputLine.length && inputLine[pos] === escCh;
+        }
+      } else {
+        // Regular literal
+        const literal = pattern[j];
+        matchFunc = (pos) => pos < inputLine.length && inputLine[pos] === literal;
+      }
+
+      // Count how many times we can match
+      let matchCount = 0;
+      let testPos = i;
+      while (matchFunc(testPos)) {
+        matchCount++;
+        testPos++;
+      }
+
+      // Must match at least min times
+      if (matchCount < min) return null;
+
+      // Try from max down to min (greedy with backtracking)
+      const actualMax = Math.min(matchCount, max);
+      for (let k = actualMax; k >= min; k--) {
+        const res = solve(i + k, next_j_after, j_end, inputLine, pattern, captures);
+        if (res) return res;
+      }
+      return null;
+    }
+  }
+
+  // Literal character with quantifier
   const literalHasPlus = nextPatChar === '+';
   const literalHasQuestion = nextPatChar === '?';
+
   if (literalHasPlus || literalHasQuestion) {
     const literal = pattern[j];
     let matchCount = 0;

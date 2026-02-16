@@ -33,8 +33,6 @@ function main() {
 
   if (!pattern) {
     if (filePaths.length === 0) {
-      // No pattern provided and no files? usage error potentially, or pattern implicit?
-      // Spec says -E is provided.
       console.error("Expected -E");
       process.exit(1);
     }
@@ -48,6 +46,7 @@ function main() {
     try {
       const content = fs.readFileSync(0, "utf-8");
       const lines = content.split("\n");
+      // console.error("DEBUG: Stdin content length:", content.length);
       for (const line of lines) {
         inputLines.push({ text: line, source: "(standard input)" });
       }
@@ -104,6 +103,7 @@ function main() {
   let ast;
   try {
     ast = parsePattern(pattern);
+    // console.error("DEBUG: AST parsed.");
   } catch (e) {
     console.error("Invalid Regex:", e.message);
     process.exit(1);
@@ -113,9 +113,11 @@ function main() {
   const showSource = (filePaths.length > 0 && recursive) || (filePaths.length > 1);
 
   for (const { text: line, source } of inputLines) {
+    // console.error(`DEBUG: Matching line: '${line}'`);
     const matches = findMatches(line, ast);
 
     if (matches.length > 0) {
+      // console.error(`DEBUG: MATCHED: ${matches.length}`);
       anyMatch = true;
 
       if (printOnly) {

@@ -169,7 +169,7 @@ function main() {
       } else {
         const startCtx = Math.max(0, lineIdx - contextLines);
 
-        if (lastPrintedLine !== -1 && startCtx > lastPrintedLine + 1) {
+        if (contextLines > 0 && lastPrintedLine !== -1 && startCtx > lastPrintedLine + 1) {
           const prevSource = inputLines[lastPrintedLine].source;
           if (prevSource === source) {
             console.log("--");

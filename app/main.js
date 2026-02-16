@@ -103,7 +103,7 @@ function main() {
           for (const m of matches) {
             if (m.start >= lastIndex) {
               parts.push(line.slice(lastIndex, m.start));
-              parts.push(`\x1b[31m${m.match}\x1b[0m`);
+              parts.push(`\x1b[1;31m${m.match}\x1b[0m`);
               lastIndex = m.end;
             }
           }

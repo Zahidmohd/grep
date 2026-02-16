@@ -274,6 +274,59 @@ const solve = (i, j_start, j_end, inputLine, pattern, captures) => {
     const quant = (afterGroupIdx < pattern.length) ? pattern[afterGroupIdx] : null;
     const hasPlusAfterGroup = quant === '+';
     const hasQuestionAfterGroup = quant === '?';
+    const hasBraceAfterGroup = quant === '{';
+
+    // Handle {n,m} quantifier for groups
+    if (hasBraceAfterGroup) {
+      let closeBrace = pattern.indexOf('}', afterGroupIdx);
+      if (closeBrace !== -1) {
+        const rangeStr = pattern.slice(afterGroupIdx + 1, closeBrace);
+        let min, max;
+        if (rangeStr.includes(',')) {
+          const parts = rangeStr.split(',');
+          min = parseInt(parts[0]);
+          max = parts[1] === '' ? Infinity : parseInt(parts[1]);
+        } else {
+          min = max = parseInt(rangeStr);
+        }
+
+        const next_j_after_group = closeBrace + 1;
+
+        // Match the group min to max times greedily
+        const posSnapshots = [];
+        const capsSnapshots = [];
+        let currPos = i;
+        let currCaps = [...captures];
+
+        while (posSnapshots.length < max) {
+          const subRes = solve(currPos, j + 1, endParenIndex, inputLine, pattern, currCaps);
+          if (!subRes) break;
+          if (subRes.pos <= currPos) break; // avoid infinite loops
+          currPos = subRes.pos;
+          currCaps = subRes.captures;
+          posSnapshots.push(currPos);
+          capsSnapshots.push([...currCaps]);
+        }
+
+        // Must match at least min times
+        if (posSnapshots.length < min) return null;
+
+        // Try from max down to min (greedy with backtracking)
+        for (let rep = posSnapshots.length; rep >= min; rep--) {
+          const posAfterReps = posSnapshots[rep - 1];
+          const capsAfterReps = capsSnapshots[rep - 1];
+          const lastGroupCaptureValue = inputLine.slice(i, posAfterReps);
+          const newCaps = [...capsAfterReps];
+          newCaps[groupNum - 1] = lastGroupCaptureValue;
+          log(`Trying group #${groupNum} with ${rep} repetitions, capture='${lastGroupCaptureValue}'`);
+          const rest = solve(posAfterReps, next_j_after_group, j_end, inputLine, pattern, newCaps);
+          if (rest) return rest;
+        }
+
+        return null;
+      }
+    }
+
     const next_j_after_group = endParenIndex + (hasPlusAfterGroup || hasQuestionAfterGroup ? 2 : 1);
 
     // Non-repeated, non-optional group

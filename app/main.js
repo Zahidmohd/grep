@@ -135,23 +135,8 @@ function matchToken(line, token) {
     for (const option of options) {
       // Check if option matches at start of line
       const len = matchHere(line, option);
-      // matchHere matched the option AND the rest... wait.
-      // matchHere(line, pattern) checks if line starts with pattern.
-      // But we only want to match the OPTION itself here, not the "rest".
-      // We can hack this: matchHere(line, option + "$")? No, that expects EOL.
-      // We need matchHere to just match the pattern passed and return length used.
-      // Actually, matchHere(line, pattern) currently means "pattern matches at start of line".
-      // Ideally if we pass just the option as pattern, it returns length of option match?
-      // NO. matchHere(line, pattern) returns length of WHOLE pattern match.
-      // So if pattern is "abc", it returns 3.
-      // BUT matchHere logic currently recurses... 
-      // If we ask matchHere(line, option), and option is "abc", 
-      // it will eat 'a', call matchHere('bc'), eat 'b' call matchHere('c')... etc.
-      // Eventually matchHere("", "") returns 0.
-      // So yes, matchHere(original_line, option) returns length of string consumed by option.
-      // IF we pass NO remaining pattern.
-
-      const len = matchHere(line, option);
+      // Logic explanation: matchHere with just the option checks if the line starts with the option pattern.
+      // It returns the length consumed by the pattern if it matches (because recursive base case returns 0).
       if (len !== null) return len;
     }
     return null;

@@ -142,6 +142,8 @@ function matchToken(line, token) {
     return null;
   }
 
+  // Single char token match check
+  // For character classes or literals, length is always 1 if matchChar returns true
   if (matchChar(line[0], token)) {
     return 1;
   }
@@ -157,6 +159,7 @@ function matchOneOrMore(line, token, remainingPattern) {
   while (true) {
     const len = matchToken(currentLine, token);
     if (len === null) break;
+    if (len === 0) break; // Avoid infinite loop
     matches.push(len);
     totalLen += len;
     currentLine = currentLine.slice(len);
@@ -183,9 +186,15 @@ function matchZeroOrMore(line, token, remainingPattern) {
   while (true) {
     const len = matchToken(currentLine, token);
     if (len === null) break;
+    // Prevent infinite loop if token matches empty string (e.g. empty group or *)
+    // Standard regex behavior: if a repetition matches empty string, it stops or advances carefully.
+    // Here, if len is 0, we are not consuming anything, so next iteration will be same state -> infinite loop.
+    if (len === 0) break;
+
     matches.push(len);
     totalLen += len;
     matchedParams.push(totalLen);
+    currentLine = currentLine.slice(len);
   }
 
   for (let i = matches.length; i >= 0; i--) {

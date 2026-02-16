@@ -1,6 +1,9 @@
 const fs = require("fs");
 const path = require("path");
 
+const DEBUG = false;
+const log = (...args) => { if (DEBUG) console.error("DEBUG:", ...args); };
+
 function main() {
   const args = process.argv.slice(2);
   let printOnly = false;
@@ -23,7 +26,7 @@ function main() {
       useColor = false;
     } else if (arg === "-E") {
       pattern = args[i + 1];
-      i++; // Skip pattern
+      i++;
     } else {
       if (!arg.startsWith("-")) {
         filePaths.push(arg);
@@ -38,101 +41,65 @@ function main() {
     }
   }
 
-  // Collect input lines
-  let inputLines = []; // { text, source }
+  let inputLines = [];
 
   if (filePaths.length === 0) {
-    // Stdin
     try {
       const content = fs.readFileSync(0, "utf-8");
       const lines = content.split("\n");
-      // console.error("DEBUG: Stdin content length:", content.length);
-      for (const line of lines) {
+      for (let line of lines) {
+        if (line.endsWith('\r')) line = line.slice(0, -1);
         inputLines.push({ text: line, source: "(standard input)" });
       }
     } catch (e) {
       // Empty stdin
     }
   } else {
-    // Files (recursive support)
     const expandedPaths = [];
-
     const processPath = (p) => {
       try {
         const stats = fs.statSync(p);
         if (stats.isDirectory()) {
           if (recursive) {
             const items = fs.readdirSync(p);
-            for (const item of items) {
-              processPath(path.join(p, item));
-            }
-          } else {
-            console.error(`grep: ${p}: Is a directory`);
-          }
-        } else {
-          expandedPaths.push(p);
-        }
-      } catch (e) {
-        console.error(`grep: ${p}: No such file or directory`);
-      }
+            for (const item of items) processPath(path.join(p, item));
+          } else console.error(`grep: ${p}: Is a directory`);
+        } else expandedPaths.push(p);
+      } catch (e) { console.error(`grep: ${p}: No such file or directory`); }
     };
+    for (const p of filePaths) processPath(p);
 
-    for (const p of filePaths) {
-      processPath(p);
-    }
-
-    // Read lines
     for (const p of expandedPaths) {
       try {
         const content = fs.readFileSync(p, "utf-8");
         const lines = content.split("\n");
-        // Handle trailing empty line from split
-        if (content.endsWith("\n") && lines[lines.length - 1] === "") {
-          lines.pop();
-        }
-        for (const line of lines) {
+        if (content.endsWith("\n") && lines[lines.length - 1] === "") lines.pop();
+        for (let line of lines) {
+          if (line.endsWith('\r')) line = line.slice(0, -1);
           inputLines.push({ text: line, source: p });
         }
-      } catch (e) {
-        console.error(e.message);
-      }
+      } catch (e) { console.error(e.message); }
     }
-  }
-
-  // Parse AST
-  let ast;
-  try {
-    ast = parsePattern(pattern);
-    // console.error("DEBUG: AST parsed.");
-  } catch (e) {
-    console.error("Invalid Regex:", e.message);
-    process.exit(1);
   }
 
   let anyMatch = false;
   const showSource = (filePaths.length > 0 && recursive) || (filePaths.length > 1);
 
   for (const { text: line, source } of inputLines) {
-    // console.error(`DEBUG: Matching line: '${line}'`);
-    const matches = findMatches(line, ast);
+    const matches = findMatches(line, pattern);
 
     if (matches.length > 0) {
-      // console.error(`DEBUG: MATCHED: ${matches.length}`);
       anyMatch = true;
-
       if (printOnly) {
         for (const m of matches) {
           if (showSource) console.log(`${source}:${m.match}`);
           else console.log(m.match);
         }
       } else {
-        // Construct output
         let output = line;
         if (useColor) {
           let parts = [];
           let lastIndex = 0;
-          // Ensure matches are sorted and undefined/overlapping handled?
-          // findMatches returns sequential greedy matches.
           for (const m of matches) {
             if (m.start >= lastIndex) {
               parts.push(line.slice(lastIndex, m.start));
@@ -143,304 +110,475 @@ function main() {
           parts.push(line.slice(lastIndex));
           output = parts.join("");
         }
-
         if (showSource) console.log(`${source}:${output}`);
         else console.log(output);
       }
     }
   }
-
   process.exit(anyMatch ? 0 : 1);
 }
 
-// --- AST Parser ---
+// Global store for pre-parsed group information
+let groupInfo = {};
 
-function parsePattern(pattern) {
-  let pos = 0;
-  let groupIdCounter = 1;
+const isUnescaped = (pattern, pos) => {
+  let count = 0;
+  for (let k = pos - 1; k >= 0 && pattern[k] === '\\'; k--) count++;
+  return count % 2 === 0;
+};
 
-  function peek() { return pattern[pos]; }
-  function consume() { return pattern[pos++]; }
-  function match(char) { if (peek() === char) { consume(); return true; } return false; }
+const preParseGroups = (pattern) => {
+  const info = {};
+  const stack = [];
+  let groupCounter = 0;
+  let inBracket = false;
 
-  function parseSequenceContext() {
-    const elements = [];
-    while (pos < pattern.length) {
-      if (peek() === '|' || peek() === ')') break;
-      elements.push(parseAtom());
+  for (let i = 0; i < pattern.length; i++) {
+    if (pattern[i] === '\\') {
+      i++;
+      continue;
     }
-    if (elements.length === 1) return elements[0];
-    return { type: 'Sequence', elements };
-  }
-
-  function parseAlternationContext() {
-    const left = parseSequenceContext();
-    if (match('|')) {
-      const right = parseAlternationContext();
-      return { type: 'Alternation', left, right };
+    if (pattern[i] === '[' && !inBracket) {
+      inBracket = true;
+      continue;
     }
-    return left;
-  }
-
-  function parseAtom() {
-    let base;
-    const char = peek();
-
-    if (char === '(') {
-      consume();
-      const id = groupIdCounter++;
-      const inner = parseAlternationContext();
-      if (!match(')')) throw new Error("Unmatched (");
-      base = { type: 'Group', number: id, inner };
-    } else if (char === '[') {
-      consume();
-      let inverted = false;
-      if (match('^')) inverted = true;
-      let inclusions = "";
-      while (pos < pattern.length && peek() !== ']') {
-        inclusions += consume();
-      }
-      if (!match(']')) throw new Error("Unmatched [");
-      base = { type: 'CharClass', inverted, inclusions };
-    } else if (char === '\\') {
-      consume();
-      const special = consume();
-      if (special >= '1' && special <= '9') {
-        base = { type: 'Backref', index: parseInt(special) };
-      } else if (special === 'd' || special === 'w') {
-        base = { type: 'SpecialClass', value: special };
-      } else {
-        base = { type: 'Literal', value: special };
-      }
-    } else if (char === '.') {
-      consume();
-      base = { type: 'Dot' };
-    } else if (char === '^') {
-      consume();
-      base = { type: 'AnchorStart' };
-    } else if (char === '$') {
-      consume();
-      base = { type: 'AnchorEnd' };
-    } else {
-      base = { type: 'Literal', value: consume() };
+    if (pattern[i] === ']' && inBracket) {
+      inBracket = false;
+      continue;
     }
+    if (inBracket) continue;
 
-    // Check Quantifier
-    if (pos < pattern.length) {
-      const q = peek();
-      if (q === '+') {
-        consume();
-        return { type: 'Quantifier', inner: base, min: 1, max: Infinity };
-      } else if (q === '*') {
-        consume();
-        return { type: 'Quantifier', inner: base, min: 0, max: Infinity };
-      } else if (q === '?') {
-        consume();
-        return { type: 'Quantifier', inner: base, min: 0, max: 1 };
-      } else if (q === '{') {
-        consume();
-        // Parse range
-        const start = pos;
-        while (pos < pattern.length && peek() !== '}') pos++;
-        const content = pattern.slice(start, pos);
-        consume(); // }
-
-        if (content.includes(',')) {
-          const parts = content.split(',');
-          const min = parseInt(parts[0]);
-          const maxPart = parts[1];
-          const max = maxPart === "" ? Infinity : parseInt(maxPart);
-          return { type: 'Quantifier', inner: base, min, max };
-        } else {
-          const times = parseInt(content);
-          return { type: 'Quantifier', inner: base, min: times, max: times };
+    if (pattern[i] === '(') {
+      groupCounter++;
+      info[i] = { number: groupCounter, end: -1 };
+      stack.push(i);
+    } else if (pattern[i] === ')') {
+      if (stack.length > 0) {
+        const startGroupIndex = stack.pop();
+        if (info[startGroupIndex]) {
+          info[startGroupIndex].end = i;
         }
       }
     }
+  }
+  return info;
+};
 
-    return base;
+const isWordChar = (ch) => /[A-Za-z0-9_]/.test(ch);
+
+const findTopLevelPipes = (pattern, j_start, j_end) => {
+  const splits = [];
+  let depth = 0;
+  let inBracket = false;
+  for (let k = j_start; k < j_end; k++) {
+    const ch = pattern[k];
+    if (ch === '\\') {
+      k++;
+      continue;
+    }
+    if (ch === '[' && !inBracket) {
+      inBracket = true;
+      continue;
+    }
+    if (ch === ']' && inBracket) {
+      inBracket = false;
+      continue;
+    }
+    if (inBracket) continue;
+    if (ch === '(') depth++;
+    else if (ch === ')') depth = Math.max(0, depth - 1);
+    else if (ch === '|' && depth === 0) splits.push(k);
+  }
+  return splits;
+};
+
+const solve = (i, j_start, j_end, inputLine, pattern, captures) => {
+  log(`solve(i=${i}, j_start=${j_start}, j_end=${j_end}) on pat='${pattern.substring(j_start, j_end)}'`);
+
+  if (j_start >= j_end) {
+    return { pos: i, captures };
   }
 
-  // Initial parse
-  return parseAlternationContext();
-}
+  const j = j_start;
 
-// --- Matcher ---
+  // Alternation
+  const topLevelPipes = findTopLevelPipes(pattern, j_start, j_end);
+  if (topLevelPipes.length > 0) {
+    let last = j_start;
+    const alts = [];
+    for (const p of topLevelPipes) {
+      alts.push([last, p]);
+      last = p + 1;
+    }
+    alts.push([last, j_end]);
 
-function findMatches(line, ast) {
-  const matches = [];
+    for (const [altStart, altEnd] of alts) {
+      log(`Trying alternative pat='${pattern.substring(altStart, altEnd)}'`);
+      const res = solve(i, altStart, altEnd, inputLine, pattern, captures);
+      if (res) return res;
+    }
+    return null;
+  }
 
-  if (ast.type === 'AnchorStart') {
-    const res = matchSequence(line, [ast.inner || ast], 0, []); // AnchorStart usually wraps nothing or is just a node.
+  // Character Class
+  if (pattern[j] === '[') {
+    const endBracket = pattern.indexOf(']', j + 1);
+    if (endBracket === -1) return null;
+    const quant = (endBracket + 1 < pattern.length) ? pattern[endBracket + 1] : null;
+    const hasPlus = quant === '+';
+    const hasQuestion = quant === '?';
+    const next_j = endBracket + (hasPlus || hasQuestion ? 2 : 1);
 
-    if (ast.type === 'Sequence' && ast.elements[0].type === 'AnchorStart') {
-      // Sequence starting with AnchorStart - handled by matchSequence calling matchSingleNode(AnchorStart)
+    let str = pattern.slice(j + 1, endBracket);
+    const isNegated = str[0] === '^';
+    if (isNegated) str = str.slice(1);
+
+    const check = (char) => isNegated ? !str.includes(char) : str.includes(char);
+
+    if (hasPlus) {
+      if (i >= inputLine.length || !check(inputLine[i])) return null;
+      let matchCount = 0;
+      while (i + matchCount < inputLine.length && check(inputLine[i + matchCount])) {
+        matchCount++;
+      }
+      log(`Greedy '+' found ${matchCount} possible matches (char class).`);
+      for (let k = matchCount; k >= 1; k--) {
+        log(`Trying '+' match of length ${k} (char class)`);
+        const res = solve(i + k, next_j, j_end, inputLine, pattern, captures);
+        if (res) return res;
+      }
+      return null;
+    }
+
+    if (hasQuestion) {
+      if (i < inputLine.length && check(inputLine[i])) {
+        const tryConsume = solve(i + 1, next_j, j_end, inputLine, pattern, captures);
+        if (tryConsume) return tryConsume;
+      }
+      return solve(i, next_j, j_end, inputLine, pattern, captures);
+    }
+
+    if (i < inputLine.length && check(inputLine[i])) {
+      return solve(i + 1, next_j, j_end, inputLine, pattern, captures);
+    }
+    return null;
+  }
+
+  // Group
+  if (pattern[j] === '(') {
+    const info = groupInfo[j];
+    if (!info) return null;
+    const groupNum = info.number;
+    const endParenIndex = info.end;
+    const afterGroupIdx = endParenIndex + 1;
+    const quant = (afterGroupIdx < pattern.length) ? pattern[afterGroupIdx] : null;
+    const hasPlusAfterGroup = quant === '+';
+    const hasQuestionAfterGroup = quant === '?';
+    const next_j_after_group = endParenIndex + (hasPlusAfterGroup || hasQuestionAfterGroup ? 2 : 1);
+
+    // Non-repeated, non-optional group
+    if (!hasPlusAfterGroup && !hasQuestionAfterGroup) {
+      const groupResult = solve(i, j + 1, endParenIndex, inputLine, pattern, captures);
+      if (groupResult) {
+        const posAfterGroup = groupResult.pos;
+        const capturesFromGroup = groupResult.captures;
+        const capturedValue = inputLine.slice(i, posAfterGroup);
+
+        const newCaptures = [...capturesFromGroup];
+        newCaptures[groupNum - 1] = capturedValue;
+        log(`Group #${groupNum} captured '${capturedValue}'`);
+
+        const rest = solve(posAfterGroup, next_j_after_group, j_end, inputLine, pattern, newCaptures);
+        if (rest) return rest;
+
+        // Backtrack shorter prefixes
+        for (let len = capturedValue.length - 1; len >= 1; len--) {
+          log(`Backtracking group #${groupNum}: trying shorter capture length ${len}`);
+          const sub = inputLine.slice(i, i + len);
+          const initialCaps = [...captures];
+          const subResult = solve(0, j + 1, endParenIndex, sub, pattern, initialCaps);
+          if (subResult && subResult.pos === sub.length) {
+            const newCaps2 = [...subResult.captures];
+            newCaps2[groupNum - 1] = sub;
+            const finalRes = solve(i + len, next_j_after_group, j_end, inputLine, pattern, newCaps2);
+            if (finalRes) return finalRes;
+          }
+        }
+      }
+      return null;
+    }
+
+    // Repeated group '+'
+    if (hasPlusAfterGroup) {
+      const posSnapshots = [];
+      const capsSnapshots = [];
+      let currPos = i;
+      let currCaps = [...captures];
+
+      while (true) {
+        const subRes = solve(currPos, j + 1, endParenIndex, inputLine, pattern, currCaps);
+        if (!subRes) break;
+        if (subRes.pos <= currPos) break;
+        currPos = subRes.pos;
+        currCaps = subRes.captures;
+        posSnapshots.push(currPos);
+        capsSnapshots.push([...currCaps]);
+      }
+
+      if (posSnapshots.length === 0) return null;
+
+      log(`Group at ${j} had ${posSnapshots.length} greedy repetitions (positions: ${posSnapshots})`);
+
+      for (let rep = posSnapshots.length; rep >= 1; rep--) {
+        const posAfterReps = posSnapshots[rep - 1];
+        const capsAfterReps = capsSnapshots[rep - 1];
+        const lastGroupCaptureValue = inputLine.slice(i, posAfterReps);
+        const newCaps = [...capsAfterReps];
+        newCaps[groupNum - 1] = lastGroupCaptureValue;
+        log(`Trying with ${rep} repetitions for group #${groupNum}, capture='${lastGroupCaptureValue}'`);
+        const rest = solve(posAfterReps, next_j_after_group, j_end, inputLine, pattern, newCaps);
+        if (rest) return rest;
+      }
+
+      return null;
+    }
+
+    // Optional group '?'
+    if (hasQuestionAfterGroup) {
+      const groupResult = solve(i, j + 1, endParenIndex, inputLine, pattern, captures);
+      if (groupResult) {
+        const posAfterGroup = groupResult.pos;
+        const capturesFromGroup = groupResult.captures;
+        const capturedValue = inputLine.slice(i, posAfterGroup);
+
+        const newCaptures = [...capturesFromGroup];
+        newCaptures[groupNum - 1] = capturedValue;
+        log(`Optional Group #${groupNum} captured '${capturedValue}'`);
+
+        const rest = solve(posAfterGroup, next_j_after_group, j_end, inputLine, pattern, newCaptures);
+        if (rest) return rest;
+      }
+      log(`Optional Group #${groupNum}: trying skip (0 occurrences)`);
+      return solve(i, next_j_after_group, j_end, inputLine, pattern, captures);
     }
   }
 
-  // Scan line
+  // Escapes and backreferences
+  if (pattern[j] === '\\') {
+    if (j + 1 >= pattern.length) return null;
+    const escCh = pattern[j + 1];
+    const quant = (j + 2 < pattern.length) ? pattern[j + 2] : null;
+    const hasPlus = quant === '+';
+    const hasQuestion = quant === '?';
+    const nextIndexAfter = j + (hasPlus || hasQuestion ? 3 : 2);
+
+    // Backreference
+    if (escCh >= '1' && escCh <= '9') {
+      const groupIndex = parseInt(escCh, 10) - 1;
+      const groupValue = captures[groupIndex];
+      if (groupValue === undefined) {
+        if (hasQuestion) return solve(i, nextIndexAfter, j_end, inputLine, pattern, captures);
+        return null;
+      }
+      if (!hasPlus && !hasQuestion) {
+        if (inputLine.startsWith(groupValue, i)) {
+          log(`Backref \\${groupIndex + 1} matched '${groupValue}'`);
+          return solve(i + groupValue.length, nextIndexAfter, j_end, inputLine, pattern, captures);
+        }
+        return null;
+      }
+
+      let count = 0;
+      let curr = i;
+      while (inputLine.startsWith(groupValue, curr)) {
+        curr += groupValue.length;
+        count++;
+      }
+      if (hasPlus) {
+        if (count === 0) return null;
+        for (let k = count; k >= 1; k--) {
+          const posTry = i + k * groupValue.length;
+          const res = solve(posTry, nextIndexAfter, j_end, inputLine, pattern, captures);
+          if (res) return res;
+        }
+        return null;
+      } else {
+        if (count >= 1) {
+          const tryConsume = solve(i + groupValue.length, nextIndexAfter, j_end, inputLine, pattern, captures);
+          if (tryConsume) return tryConsume;
+        }
+        return solve(i, nextIndexAfter, j_end, inputLine, pattern, captures);
+      }
+    }
+
+    // Special classes
+    if (escCh === 'w' || escCh === 'd' || escCh === 's') {
+      const checkChar = (ch) => {
+        if (escCh === 'w') return isWordChar(ch);
+        if (escCh === 'd') return /[0-9]/.test(ch);
+        return /\s/.test(ch);
+      };
+
+      if (!hasPlus && !hasQuestion) {
+        if (i < inputLine.length && checkChar(inputLine[i])) {
+          return solve(i + 1, nextIndexAfter, j_end, inputLine, pattern, captures);
+        }
+        return null;
+      }
+
+      if (hasPlus) {
+        if (i >= inputLine.length || !checkChar(inputLine[i])) return null;
+        let matchCount = 0;
+        while (i + matchCount < inputLine.length && checkChar(inputLine[i + matchCount])) matchCount++;
+        log(`Escaped '${escCh}+' greedy matched ${matchCount} chars.`);
+        for (let k = matchCount; k >= 1; k--) {
+          const res = solve(i + k, nextIndexAfter, j_end, inputLine, pattern, captures);
+          if (res) return res;
+        }
+        return null;
+      }
+
+      if (hasQuestion) {
+        if (i < inputLine.length && checkChar(inputLine[i])) {
+          const tryConsume = solve(i + 1, nextIndexAfter, j_end, inputLine, pattern, captures);
+          if (tryConsume) return tryConsume;
+        }
+        return solve(i, nextIndexAfter, j_end, inputLine, pattern, captures);
+      }
+    }
+
+    // Generic escaped literal
+    if (!hasPlus && !hasQuestion) {
+      const literal = escCh;
+      if (i < inputLine.length && inputLine[i] === literal) {
+        return solve(i + 1, nextIndexAfter, j_end, inputLine, pattern, captures);
+      }
+      return null;
+    }
+
+    if (hasPlus) {
+      const literal = escCh;
+      if (i >= inputLine.length || inputLine[i] !== literal) return null;
+      let matchCount = 0;
+      while (i + matchCount < inputLine.length && inputLine[i + matchCount] === literal) matchCount++;
+      for (let k = matchCount; k >= 1; k--) {
+        const res = solve(i + k, nextIndexAfter, j_end, inputLine, pattern, captures);
+        if (res) return res;
+      }
+      return null;
+    }
+
+    if (hasQuestion) {
+      const literal = escCh;
+      if (i < inputLine.length && inputLine[i] === literal) {
+        const tryConsume = solve(i + 1, nextIndexAfter, j_end, inputLine, pattern, captures);
+        if (tryConsume) return tryConsume;
+      }
+      return solve(i, nextIndexAfter, j_end, inputLine, pattern, captures);
+    }
+  }
+
+  // Wildcard '.'
+  if (pattern[j] === '.') {
+    const quant = (j + 1 < pattern.length) ? pattern[j + 1] : null;
+    const hasPlus = quant === '+';
+    const hasQuestion = quant === '?';
+    const next_j_after = j + (hasPlus || hasQuestion ? 2 : 1);
+
+    if (!hasPlus && !hasQuestion) {
+      if (i < inputLine.length) {
+        return solve(i + 1, next_j_after, j_end, inputLine, pattern, captures);
+      }
+      return null;
+    }
+
+    if (hasPlus) {
+      if (i >= inputLine.length) return null;
+      let matchCount = inputLine.length - i;
+      for (let k = matchCount; k >= 1; k--) {
+        const res = solve(i + k, next_j_after, j_end, inputLine, pattern, captures);
+        if (res) return res;
+      }
+      return null;
+    }
+
+    if (hasQuestion) {
+      if (i < inputLine.length) {
+        const tryConsume = solve(i + 1, next_j_after, j_end, inputLine, pattern, captures);
+        if (tryConsume) return tryConsume;
+      }
+      return solve(i, next_j_after, j_end, inputLine, pattern, captures);
+    }
+  }
+
+  // Literal character with quantifier
+  const nextPatChar = (j + 1 < pattern.length) ? pattern[j + 1] : null;
+  const literalHasPlus = nextPatChar === '+';
+  const literalHasQuestion = nextPatChar === '?';
+  if (literalHasPlus || literalHasQuestion) {
+    const literal = pattern[j];
+    let matchCount = 0;
+    while (i + matchCount < inputLine.length && inputLine[i + matchCount] === literal) matchCount++;
+    if (literalHasPlus) {
+      if (matchCount === 0) return null;
+      log(`Literal '${literal}+' greedy matched ${matchCount} times.`);
+      const next_j_after = j + 2;
+      for (let k = matchCount; k >= 1; k--) {
+        const res = solve(i + k, next_j_after, j_end, inputLine, pattern, captures);
+        if (res) return res;
+      }
+      return null;
+    } else {
+      const next_j_after = j + 2;
+      if (matchCount >= 1) {
+        const tryConsume = solve(i + 1, next_j_after, j_end, inputLine, pattern, captures);
+        if (tryConsume) return tryConsume;
+      }
+      return solve(i, next_j_after, j_end, inputLine, pattern, captures);
+    }
+  }
+
+  // Default: literal single char
+  if (i < inputLine.length && pattern[j] === inputLine[i]) {
+    return solve(i + 1, j + 1, j_end, inputLine, pattern, captures);
+  }
+
+  return null;
+};
+
+function findMatches(line, pattern) {
+  const hasStartAnchor = pattern.length > 0 && pattern[0] === '^' && isUnescaped(pattern, 0);
+  const lastIndex = pattern.length - 1;
+  const hasEndAnchor = pattern.length > 0 && pattern[lastIndex] === '$' && isUnescaped(pattern, lastIndex);
+
+  groupInfo = preParseGroups(pattern);
+  log('Pre-parsed group info:', groupInfo);
+
+  const j_start_pattern = hasStartAnchor ? 1 : 0;
+  const j_end_pattern = hasEndAnchor ? pattern.length - 1 : pattern.length;
+
+  const allMatches = [];
+
   let i = 0;
   while (i <= line.length) {
+    if (hasStartAnchor && i > 0) break;
 
-    const nodes = (ast.type === 'Sequence') ? ast.elements : [ast];
-    const res = matchSequence(line, nodes, i, []);
+    let res = solve(i, j_start_pattern, j_end_pattern, line, pattern, []);
+    if (hasEndAnchor && res && res.pos !== line.length) res = null;
 
     if (res) {
-      matches.push({ start: i, end: i + res.length, match: line.slice(i, i + res.length) });
-      if (res.length > 0) i += res.length;
-      else i++;
+      if (res.pos === i) {
+        if (i === line.length) break;
+        i++;
+      } else {
+        allMatches.push({ start: i, end: res.pos, match: line.slice(i, res.pos) });
+        i = res.pos;
+      }
     } else {
       i++;
     }
   }
-  return matches;
-}
-
-function matchSequence(line, nodes, offset, captures) {
-  if (nodes.length === 0) return { length: 0, captures };
-
-  const [head, ...tail] = nodes;
-
-  if (head.type === 'Quantifier') {
-    const min = head.min;
-    const max = head.max;
-    const inner = head.inner;
-
-    let possibleMatches = [];
-    let currentOffset = offset;
-    let currentCaptures = [...captures];
-    let count = 0;
-
-    // Match Min
-    while (count < min) {
-      const res = matchSingleNode(line, inner, currentOffset, currentCaptures);
-      if (!res) return null;
-      possibleMatches.push(res);
-      currentOffset += res.length;
-      currentCaptures = res.captures;
-      count++;
-    }
-
-    // Match Extra (Greedy)
-    const mandatoryMatches = [...possibleMatches];
-    const mandatoryOffset = currentOffset;
-    const mandatoryCaptures = currentCaptures;
-
-    const extraMatches = [];
-    while (count < max) {
-      const res = matchSingleNode(line, inner, currentOffset, currentCaptures);
-      if (!res) break;
-      if (res.length === 0) break; // Infinite loop protection
-      extraMatches.push(res);
-      currentOffset += res.length;
-      currentCaptures = res.captures;
-      count++;
-    }
-
-    // Backtrack
-    for (let i = extraMatches.length; i >= 0; i--) {
-      // Reconstruct state
-      let myOffset = mandatoryOffset;
-      let myCaptures = mandatoryCaptures;
-      for (let k = 0; k < i; k++) {
-        myOffset += extraMatches[k].length;
-        myCaptures = extraMatches[k].captures;
-      }
-
-      const tailRes = matchSequence(line, tail, myOffset, myCaptures);
-      if (tailRes) {
-        return { length: (myOffset - offset) + tailRes.length, captures: tailRes.captures };
-      }
-    }
-    return null;
-
-  } else if (head.type === 'Alternation') {
-    // Left | Right
-    const leftNodes = (head.left.type === 'Sequence') ? head.left.elements : [head.left];
-    const resLeft = matchSequence(line, [...leftNodes, ...tail], offset, captures);
-    if (resLeft) return resLeft;
-
-    const rightNodes = (head.right.type === 'Sequence') ? head.right.elements : [head.right];
-    return matchSequence(line, [...rightNodes, ...tail], offset, captures);
-
-  } else {
-    // Atomic
-    const res = matchSingleNode(line, head, offset, captures);
-    if (res) {
-      const tailRes = matchSequence(line, tail, offset + res.length, res.captures);
-      if (tailRes) {
-        return { length: res.length + tailRes.length, captures: tailRes.captures };
-      }
-    }
-    return null;
-  }
-}
-
-function matchSingleNode(line, node, offset, captures) {
-  if (offset > line.length) return null;
-  const remaining = line.slice(offset);
-
-  switch (node.type) {
-    case 'Group': {
-      const innerNodes = (node.inner.type === 'Sequence') ? node.inner.elements : [node.inner];
-      const res = matchSequence(line, innerNodes, offset, captures);
-      if (res) {
-        const capturedStr = line.slice(offset, offset + res.length);
-        const newCaps = [...res.captures];
-        newCaps[node.number - 1] = capturedStr;
-        return { length: res.length, captures: newCaps };
-      }
-      return null;
-    }
-    case 'Literal':
-      if (remaining.startsWith(node.value)) return { length: node.value.length, captures };
-      return null;
-    case 'Dot':
-      if (remaining.length > 0 && remaining[0] !== '\n') return { length: 1, captures };
-      return null;
-    case 'CharClass':
-      if (remaining.length > 0) {
-        const char = remaining[0];
-        let matched = node.inclusions.includes(char);
-        if (node.inverted) matched = !matched;
-        if (matched) return { length: 1, captures };
-      }
-      return null;
-    case 'SpecialClass':
-      if (remaining.length > 0) {
-        const char = remaining[0];
-        let matched = false;
-        if (node.value === 'd') matched = (char >= '0' && char <= '9');
-        else if (node.value === 'w') matched = (char >= 'a' && char <= 'z') || (char >= 'A' && char <= 'Z') || (char >= '0' && char <= '9') || char === '_';
-        if (matched) return { length: 1, captures };
-      }
-      return null;
-    case 'Backref': {
-      const index = node.index - 1;
-      if (index >= 0 && index < captures.length && captures[index] !== undefined) {
-        const expected = captures[index];
-        if (remaining.startsWith(expected)) return { length: expected.length, captures };
-      }
-      return null;
-    }
-    case 'AnchorStart':
-      if (offset === 0) return { length: 0, captures };
-      return null;
-    case 'AnchorEnd':
-      if (offset === line.length) return { length: 0, captures };
-      return null;
-    case 'Sequence':
-      return matchSequence(line, node.elements, offset, captures);
-    case 'Alternation': {
-      // Should verify this path? matchSingleNode usually called on Atom.
-      // Alternation inside a Group is handled by Group->Sequence logic?
-      // If Group has Alternation direct child: Group -> Alternation. 
-      // matchSingleNode(Group) calls matchSequence([Alternation]).
-      // matchSequence sees Alternation head. Handles it.
-      return matchSequence(line, [node], offset, captures);
-    }
-  }
-  return null;
+  return allMatches;
 }
 
 main();

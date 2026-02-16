@@ -227,6 +227,7 @@ const solve = (i, j_start, j_end, inputLine, pattern, captures) => {
     const quant = (endBracket + 1 < pattern.length) ? pattern[endBracket + 1] : null;
     const hasPlus = quant === '+';
     const hasQuestion = quant === '?';
+    const hasStar = quant === '*';
     const hasBrace = quant === '{';
 
     let str = pattern.slice(j + 1, endBracket);
@@ -268,17 +269,22 @@ const solve = (i, j_start, j_end, inputLine, pattern, captures) => {
       }
     }
 
-    const next_j = endBracket + (hasPlus || hasQuestion ? 2 : 1);
+    const next_j = endBracket + (hasPlus || hasQuestion || hasStar ? 2 : 1);
 
-    if (hasPlus) {
-      if (i >= inputLine.length || !check(inputLine[i])) return null;
+    if (hasPlus || hasStar) {
+      // '+' or '*' handling
       let matchCount = 0;
       while (i + matchCount < inputLine.length && check(inputLine[i + matchCount])) {
         matchCount++;
       }
-      log(`Greedy '+' found ${matchCount} possible matches (char class).`);
-      for (let k = matchCount; k >= 1; k--) {
-        log(`Trying '+' match of length ${k} (char class)`);
+
+      const minRequired = hasPlus ? 1 : 0;
+      if (matchCount < minRequired) return null;
+
+      log(`Greedy '${hasPlus ? '+' : '*'}' found ${matchCount} possible matches (char class).`);
+      // Try all lengths from max down to minRequired
+      for (let k = matchCount; k >= minRequired; k--) {
+        log(`Trying '${hasPlus ? '+' : '*'}' match of length ${k} (char class)`);
         const res = solve(i + k, next_j, j_end, inputLine, pattern, captures);
         if (res) return res;
       }
@@ -365,7 +371,7 @@ const solve = (i, j_start, j_end, inputLine, pattern, captures) => {
     const next_j_after_group = endParenIndex + (hasPlusAfterGroup || hasQuestionAfterGroup ? 2 : 1);
 
     // Non-repeated, non-optional group
-    if (!hasPlusAfterGroup && !hasQuestionAfterGroup) {
+    if (!hasPlusAfterGroup && !hasQuestionAfterGroup && !hasStarAfterGroup) {
       const groupResult = solve(i, j + 1, endParenIndex, inputLine, pattern, captures);
       if (groupResult) {
         const posAfterGroup = groupResult.pos;
@@ -396,8 +402,8 @@ const solve = (i, j_start, j_end, inputLine, pattern, captures) => {
       return null;
     }
 
-    // Repeated group '+'
-    if (hasPlusAfterGroup) {
+    // Repeated group '+' or '*'
+    if (hasPlusAfterGroup || hasStarAfterGroup) {
       const posSnapshots = [];
       const capsSnapshots = [];
       let currPos = i;
@@ -413,18 +419,24 @@ const solve = (i, j_start, j_end, inputLine, pattern, captures) => {
         capsSnapshots.push([...currCaps]);
       }
 
-      if (posSnapshots.length === 0) return null;
+      const minReps = hasPlusAfterGroup ? 1 : 0;
+      if (posSnapshots.length < minReps) return null;
 
-      log(`Group at ${j} had ${posSnapshots.length} greedy repetitions (positions: ${posSnapshots})`);
+      log(`Group at ${j} had ${posSnapshots.length} greedy matches (min ${minReps})`);
 
-      for (let rep = posSnapshots.length; rep >= 1; rep--) {
-        const posAfterReps = posSnapshots[rep - 1];
-        const capsAfterReps = capsSnapshots[rep - 1];
-        const lastGroupCaptureValue = inputLine.slice(i, posAfterReps);
-        const newCaps = [...capsAfterReps];
-        newCaps[groupNum - 1] = lastGroupCaptureValue;
-        log(`Trying with ${rep} repetitions for group #${groupNum}, capture='${lastGroupCaptureValue}'`);
-        const rest = solve(posAfterReps, next_j_after_group, j_end, inputLine, pattern, newCaps);
+      for (let rep = posSnapshots.length; rep >= minReps; rep--) {
+        const posAfterReps = rep > 0 ? posSnapshots[rep - 1] : i;
+        const capsAfterReps = rep > 0 ? capsSnapshots[rep - 1] : captures;
+
+        // For standard regex, repeated groups capture the LAST iteration's value. 
+        // Our 'capsSnapshots' contains the cumulative captures state after each iteration.
+        // So capsAfterReps already has the group #N updated to the value of the N-th iteration.
+        // We just pass it along.
+
+        const capsToPass = [...capsAfterReps];
+
+        log(`Trying with ${rep} repetitions for group #${groupNum}`);
+        const rest = solve(posAfterReps, next_j_after_group, j_end, inputLine, pattern, capsToPass);
         if (rest) return rest;
       }
 
@@ -458,6 +470,7 @@ const solve = (i, j_start, j_end, inputLine, pattern, captures) => {
     const quant = (j + 2 < pattern.length) ? pattern[j + 2] : null;
     const hasPlus = quant === '+';
     const hasQuestion = quant === '?';
+    const hasStar = quant === '*';
     const hasBrace = quant === '{';
 
     // Handle {n,m} quantifier for escaped chars
@@ -506,17 +519,17 @@ const solve = (i, j_start, j_end, inputLine, pattern, captures) => {
       }
     }
 
-    const nextIndexAfter = j + (hasPlus || hasQuestion ? 3 : 2);
+    const nextIndexAfter = j + (hasPlus || hasQuestion || hasStar ? 3 : 2);
 
     // Backreference
     if (escCh >= '1' && escCh <= '9') {
       const groupIndex = parseInt(escCh, 10) - 1;
       const groupValue = captures[groupIndex];
       if (groupValue === undefined) {
-        if (hasQuestion) return solve(i, nextIndexAfter, j_end, inputLine, pattern, captures);
+        if (hasQuestion || hasStar) return solve(i, nextIndexAfter, j_end, inputLine, pattern, captures);
         return null;
       }
-      if (!hasPlus && !hasQuestion) {
+      if (!hasPlus && !hasQuestion && !hasStar) {
         if (inputLine.startsWith(groupValue, i)) {
           log(`Backref \\${groupIndex + 1} matched '${groupValue}'`);
           return solve(i + groupValue.length, nextIndexAfter, j_end, inputLine, pattern, captures);
@@ -530,15 +543,17 @@ const solve = (i, j_start, j_end, inputLine, pattern, captures) => {
         curr += groupValue.length;
         count++;
       }
-      if (hasPlus) {
-        if (count === 0) return null;
-        for (let k = count; k >= 1; k--) {
+
+      const minMatches = hasPlus ? 1 : 0;
+      if (hasPlus || hasStar) {
+        if (count < minMatches) return null;
+        for (let k = count; k >= minMatches; k--) {
           const posTry = i + k * groupValue.length;
           const res = solve(posTry, nextIndexAfter, j_end, inputLine, pattern, captures);
           if (res) return res;
         }
         return null;
-      } else {
+      } else { // '?'
         if (count >= 1) {
           const tryConsume = solve(i + groupValue.length, nextIndexAfter, j_end, inputLine, pattern, captures);
           if (tryConsume) return tryConsume;
@@ -555,19 +570,23 @@ const solve = (i, j_start, j_end, inputLine, pattern, captures) => {
         return /\s/.test(ch);
       };
 
-      if (!hasPlus && !hasQuestion) {
+      if (!hasPlus && !hasQuestion && !hasStar) {
         if (i < inputLine.length && checkChar(inputLine[i])) {
           return solve(i + 1, nextIndexAfter, j_end, inputLine, pattern, captures);
         }
         return null;
       }
 
-      if (hasPlus) {
-        if (i >= inputLine.length || !checkChar(inputLine[i])) return null;
+      if (hasPlus || hasStar) {
+        if (i >= inputLine.length && hasPlus) return null;
         let matchCount = 0;
         while (i + matchCount < inputLine.length && checkChar(inputLine[i + matchCount])) matchCount++;
-        log(`Escaped '${escCh}+' greedy matched ${matchCount} chars.`);
-        for (let k = matchCount; k >= 1; k--) {
+
+        const minMatches = hasPlus ? 1 : 0;
+        if (matchCount < minMatches) return null;
+
+        log(`Escaped '${escCh}${hasPlus ? '+' : '*'}' greedy matched ${matchCount} chars.`);
+        for (let k = matchCount; k >= minMatches; k--) {
           const res = solve(i + k, nextIndexAfter, j_end, inputLine, pattern, captures);
           if (res) return res;
         }
@@ -584,7 +603,8 @@ const solve = (i, j_start, j_end, inputLine, pattern, captures) => {
     }
 
     // Generic escaped literal
-    if (!hasPlus && !hasQuestion) {
+    // Generic escaped literal
+    if (!hasPlus && !hasQuestion && !hasStar) {
       const literal = escCh;
       if (i < inputLine.length && inputLine[i] === literal) {
         return solve(i + 1, nextIndexAfter, j_end, inputLine, pattern, captures);
@@ -592,12 +612,15 @@ const solve = (i, j_start, j_end, inputLine, pattern, captures) => {
       return null;
     }
 
-    if (hasPlus) {
+    if (hasPlus || hasStar) {
       const literal = escCh;
-      if (i >= inputLine.length || inputLine[i] !== literal) return null;
       let matchCount = 0;
       while (i + matchCount < inputLine.length && inputLine[i + matchCount] === literal) matchCount++;
-      for (let k = matchCount; k >= 1; k--) {
+
+      const minMatches = hasPlus ? 1 : 0;
+      if (matchCount < minMatches) return null;
+
+      for (let k = matchCount; k >= minMatches; k--) {
         const res = solve(i + k, nextIndexAfter, j_end, inputLine, pattern, captures);
         if (res) return res;
       }
@@ -619,19 +642,41 @@ const solve = (i, j_start, j_end, inputLine, pattern, captures) => {
     const quant = (j + 1 < pattern.length) ? pattern[j + 1] : null;
     const hasPlus = quant === '+';
     const hasQuestion = quant === '?';
-    const next_j_after = j + (hasPlus || hasQuestion ? 2 : 1);
+    const hasStar = quant === '*';
+    const hasBrace = quant === '{';
 
-    if (!hasPlus && !hasQuestion) {
+    // Handle {n,m} for wildcard is done in the generic code block below? No, it's checked separately?
+    // Wait, the generic {n,m} block handles '.' separately. 
+    // Actually, line 534 handles {n,m} for '.' if detected. 
+    // BUT we are in the '.' specific block here.
+    // The previous {n,m} logic was inserted before "Literal character with quantifier".
+    // Does it cover '.'? 
+    // Line 512 checks "const nextPatChar... if (nextPatChar === '{')".
+    // If pattern[j]==='.', then nextPatChar IS '{' if pattern is ".{2,4}".
+    // So {n,m} logic runs BEFORE this block and returns or returns null.
+    // So we don't need to handle {n,m} here again IF we ensure correct flow.
+    // However, if {n,m} failed (returns null), we assume it didn't match and we shouldn't continue?
+    // Actually the {n,m} block returns null if it FAILS to match.
+    // But if it wasn't a {n,m} sequence, it skips.
+    // We can assume quantifiers here are just +, ?, *.
+
+    const next_j_after = j + (hasPlus || hasQuestion || hasStar ? 2 : 1);
+
+    if (!hasPlus && !hasQuestion && !hasStar) {
       if (i < inputLine.length) {
         return solve(i + 1, next_j_after, j_end, inputLine, pattern, captures);
       }
       return null;
     }
 
-    if (hasPlus) {
-      if (i >= inputLine.length) return null;
-      let matchCount = inputLine.length - i;
-      for (let k = matchCount; k >= 1; k--) {
+    if (hasPlus || hasStar) {
+      let matchCount = 0;
+      if (i < inputLine.length) matchCount = inputLine.length - i; // '.' matches everything
+
+      const minMatches = hasPlus ? 1 : 0;
+      if (matchCount < minMatches) return null;
+
+      for (let k = matchCount; k >= minMatches; k--) {
         const res = solve(i + k, next_j_after, j_end, inputLine, pattern, captures);
         if (res) return res;
       }
@@ -646,6 +691,8 @@ const solve = (i, j_start, j_end, inputLine, pattern, captures) => {
       return solve(i, next_j_after, j_end, inputLine, pattern, captures);
     }
   }
+
+
 
   // Check for {n,m} quantifier on literals, character classes, etc.
   // For escaped chars like \d, the { is at j+2, for regular chars it's at j+1
@@ -723,21 +770,26 @@ const solve = (i, j_start, j_end, inputLine, pattern, captures) => {
   const nextPatChar = (j + 1 < pattern.length) ? pattern[j + 1] : null;
   const literalHasPlus = nextPatChar === '+';
   const literalHasQuestion = nextPatChar === '?';
+  const literalHasStar = nextPatChar === '*';
 
-  if (literalHasPlus || literalHasQuestion) {
+  if (literalHasPlus || literalHasQuestion || literalHasStar) {
     const literal = pattern[j];
     let matchCount = 0;
     while (i + matchCount < inputLine.length && inputLine[i + matchCount] === literal) matchCount++;
-    if (literalHasPlus) {
-      if (matchCount === 0) return null;
-      log(`Literal '${literal}+' greedy matched ${matchCount} times.`);
+
+    if (literalHasPlus || literalHasStar) {
+      const minMatches = literalHasPlus ? 1 : 0;
+      if (matchCount < minMatches) return null;
+
+      log(`Literal '${literal}${literalHasPlus ? '+' : '*'}' greedy matched ${matchCount} times.`);
       const next_j_after = j + 2;
-      for (let k = matchCount; k >= 1; k--) {
+      for (let k = matchCount; k >= minMatches; k--) {
         const res = solve(i + k, next_j_after, j_end, inputLine, pattern, captures);
         if (res) return res;
       }
       return null;
     } else {
+      // '?'
       const next_j_after = j + 2;
       if (matchCount >= 1) {
         const tryConsume = solve(i + 1, next_j_after, j_end, inputLine, pattern, captures);

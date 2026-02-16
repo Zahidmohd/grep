@@ -85,9 +85,18 @@ function matchHere(line, pattern) {
   if (restPattern.startsWith("{")) {
     const end = restPattern.indexOf("}");
     if (end !== -1) {
-      const times = parseInt(restPattern.slice(1, end), 10);
-      if (!isNaN(times)) {
-        return matchTimes(line, token, times, restPattern.slice(end + 1));
+      const content = restPattern.slice(1, end);
+      if (content.includes(",")) {
+        const parts = content.split(",");
+        const times = parseInt(parts[0], 10);
+        if (!isNaN(times)) {
+          return matchAtLeast(line, token, times, restPattern.slice(end + 1));
+        }
+      } else {
+        const times = parseInt(content, 10);
+        if (!isNaN(times)) {
+          return matchTimes(line, token, times, restPattern.slice(end + 1));
+        }
       }
     }
   }
@@ -203,6 +212,30 @@ function matchZeroOrMore(line, token, remainingPattern) {
     if (remainingLength !== null) {
       return currentTotalLen + remainingLength;
     }
+  }
+
+  return null;
+}
+
+function matchAtLeast(line, token, minTimes, remainingPattern) {
+  let currentLine = line;
+  let totalLen = 0;
+
+  // First match exactly minTimes
+  for (let i = 0; i < minTimes; i++) {
+    const len = matchToken(currentLine, token);
+    if (len === null) return null;
+    totalLen += len;
+    currentLine = currentLine.slice(len);
+  }
+
+  // Then match zero or more of same token on the remaining string
+  // Reuse matchZeroOrMore logic but we need to return TOTAL length including the prefix
+  // matchZeroOrMore returns length or null.
+
+  const suffixLength = matchZeroOrMore(currentLine, token, remainingPattern);
+  if (suffixLength !== null) {
+    return totalLen + suffixLength;
   }
 
   return null;

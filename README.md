@@ -1,118 +1,184 @@
-# 🔍 Custom Grep & Regex Engine (JavaScript)
+# 🔍 Custom Grep & Regex Engine
 
-> **A from-scratch implementation of the legendary `grep` utility and a Recursive Backtracking Regex Engine.**
+A production-ready implementation of the Unix `grep` utility with a custom regex engine built from scratch in JavaScript. This project demonstrates advanced pattern matching using recursive backtracking algorithms without relying on built-in regex libraries.
 
-![Build Status](https://img.shields.io/badge/build-passing-brightgreen) ![License](https://img.shields.io/badge/license-MIT-blue) ![Node](https://img.shields.io/badge/node-%3E%3D14-success)
+![License](https://img.shields.io/badge/license-MIT-blue) ![Node](https://img.shields.io/badge/node-%3E%3D14-success)
 
-## 📖 Introduction
+## Overview
 
-This project is a deep-dive implementation of the Unix `grep` command, built entirely in JavaScript/Node.js. Unlike standard wrappers that rely on the built-in `RegExp` engine, this project implements its own **Regex Engine** from the ground up using **Recursive Backtracking**.
+This is a complete grep clone that implements its own regex engine using recursive backtracking. Unlike typical implementations that wrap native regex libraries, this project builds the pattern matching logic from the ground up, providing deep insight into how text search and regular expressions work at a fundamental level.
 
-It was built to understand the core computer science concepts behind pattern matching, text parsing, and command-line tool architecture.
+## Key Features
 
-## 🏗️ Architecture & The "Basic Idea"
+### Regex Pattern Support
+- **Literals**: Exact character matching (`cat`, `hello`)
+- **Wildcards**: `.` matches any single character
+- **Character Classes**: 
+  - Positive classes: `[abc]`, `[a-z]`, `[0-9]`
+  - Negated classes: `[^abc]`
+  - Shorthand classes: `\d` (digits), `\w` (word chars), `\s` (whitespace)
+- **Anchors**: 
+  - `^` or `\A` for start of line
+  - `$` or `\z` for end of line
+- **Quantifiers** (greedy with backtracking):
+  - `?` (zero or one)
+  - `*` (zero or more)
+  - `+` (one or more)
+  - `{n,m}` (range: n to m occurrences)
+  - `{n}` (exactly n occurrences)
+- **Alternation**: `(cat|dog)` matches either pattern
+- **Capture Groups**: `(...)` with backreferences `\1`, `\2`, etc.
+- **Nested Groups**: Full support for complex nested patterns
 
-At its heart, this tool is composed of two main systems:
+### Command-Line Features
+| Flag | Description |
+|------|-------------|
+| `-E <pattern>` | Specify the regex pattern to search for |
+| `-i`, `--ignore-case` | Case-insensitive matching |
+| `-v`, `--invert-match` | Show lines that don't match |
+| `-n`, `--line-number` | Display line numbers |
+| `-r` | Recursively search directories |
+| `-o` | Print only the matched parts |
+| `-C <N>`, `--context <N>` | Show N lines of context around matches |
+| `--color=always\|auto\|never` | Colorize match highlighting |
 
-1.  ** The CLI Wrapper**: Handles file I/O, argument parsing (flags like `-n`, `-r`, `-i`), and output formatting.
-2.  **The Regex Engine (`solve`)**: A recursive function that attempts to match a pattern against a string.
+## Architecture
 
-### The Core Concept: Recursive Backtracking
+The system is built in three layers:
 
-Most modern regex engines (like those in Python or Perl) use Backtracking. The basic idea is simple but powerful:
+### 1. CLI Layer (Input/Output)
+Handles command-line argument parsing, file I/O, directory traversal, and output formatting. Manages flags, reads from files or stdin, and formats results with colors and line numbers.
 
-1.  **Consume**: Try to match the current character in the pattern with the current character in the string.
-2.  **Recurse**: If successful, move to the next character in both and call the function again.
-3.  **Backtrack**: If a path fails (e.g., a `*` matched too many characters), "undo" the last step and try a different path (e.g., match one fewer character).
+### 2. Pattern Preprocessing Layer
+Before matching begins, the pattern is analyzed to identify group boundaries and structure. The `preParseGroups()` function creates a map of opening and closing parentheses, enabling efficient navigation during recursion.
 
-#### Workflow Diagram
+### 3. Regex Engine (Core Matching)
+The heart of the system is the `solve()` function, which uses recursive backtracking to match patterns:
 
-```merchant
-graph TD
-    A[Input: "a1b"] --> B(CLI Parser)
-    B --> C{Pattern: "\d"}
-    C --> D[Engine: solve(index=0, pattern_idx=0)]
-    D -- 'a' != '\d' --> E[Fail & Advance Input]
-    E --> F[solve(index=1, pattern_idx=0)]
-    F -- '1' == '\d' --> G[Match Found!]
-    G --> H[Print Output]
+```javascript
+solve(i, j_start, j_end, inputLine, pattern, captures)
 ```
 
-## ✨ Supported Features
+- `i`: Current position in input text
+- `j_start`, `j_end`: Current pattern slice being matched
+- `captures`: Array storing captured group values
 
-### 🧩 Regex Capabilities
-*   **Literals**: Matches exact characters (e.g., `cat`).
-*   **Wildcards**: `.` matches any character.
-*   **Character Classes**: 
-    *   `[abc]`: Matches any of a, b, or c.
-    *   `[^abc]`: Negated class (match start except a, b, c).
-    *   `\d`, `\w`: Digit and Word characters.
-*   **Anchors**: `^` (Start of line), `$` (End of line).
-*   **Quantifiers (Greedy)**:
-    *   `?`: Zero or one.
-    *   `*`: Zero or more.
-    *   `+`: One or more.
-    *   `{n,m}`: Range repetitions (e.g., `{2,4}`).
-*   **Alternation**: `(cat|dog)` matches "cat" OR "dog".
-*   **Groups & Backreferences**: 
-    *   Capture groups `(...)`.
-    *   Refer to captured groups later with `\1`, `\2`, etc.
+The engine recursively breaks down patterns into components (alternations, groups, character classes, literals) and attempts to match each piece. When a path fails, it backtracks and tries alternative paths.
 
-### 💻 CLI Flags
-| Flag | Description |
-| :--- | :--- |
-| `-E` | Extended regex mode (default engine). |
-| `-i` | Case-insensitive search. |
-| `-v` | Invert match (show lines that *don't* match). |
-| `-n` | Print line numbers. |
-| `-r` | Sarch directories recursively. |
-| `-C <N>` | Show `<N>` lines of context around matches. |
-| `--color`| Highlight matches (auto/always/never). |
+## How It Works
 
-## 🚀 Getting Started
+### Recursive Backtracking Algorithm
+
+1. **Base Case**: If pattern is fully consumed, return success
+2. **Alternation**: Split on `|` and try each alternative
+3. **Character Classes**: Check if current char matches the class
+4. **Groups**: Recursively match group content, store captures
+5. **Quantifiers**: Greedily match maximum repetitions, backtrack on failure
+6. **Literals**: Direct character comparison
+7. **Backtrack**: If match fails, try fewer repetitions or alternative paths
+
+### Example: Matching `a.*b` against `axxxb`
+
+```
+1. Match 'a' → success, advance
+2. Match '.*' → greedily consume 'xxxb' (all remaining)
+3. Try to match 'b' → fail (end of string)
+4. Backtrack: '.*' gives up one char → now matches 'xxx'
+5. Try to match 'b' → success!
+```
+
+## Installation & Usage
 
 ### Prerequisites
-*   **Node.js**: v14 or higher.
+- Node.js v14 or higher
 
-### Installation
-Clone the repository and ensure you have execution permissions:
-
+### Setup
 ```bash
-git clone https://github.com/yourusername/codecrafters-grep-javascript.git
+git clone <repository-url>
 cd codecrafters-grep-javascript
 chmod +x your_program.sh
 ```
 
-### Usage
-You can run the program using the helper script `your_program.sh` or directly via `node`.
+### Basic Usage
 
-**Basic Search:**
+Search for a pattern in a file:
 ```bash
-./your_program.sh -E "pattern" filename.txt
+./your_program.sh -E "pattern" file.txt
 ```
 
-**Recursive Search with Lines:**
+Case-insensitive search with line numbers:
 ```bash
-./your_program.sh -r -n -E "\d+" ./src
+./your_program.sh -E -i -n "error" app.log
 ```
 
-**Using Stdin:**
+Recursive directory search:
 ```bash
-echo "hello world" | ./your_program.sh -E "hello"
+./your_program.sh -r -E "\d{3}-\d{4}" ./src
 ```
 
-## 📂 Project Structure
+Search from stdin:
+```bash
+echo "test123" | ./your_program.sh -E "\d+"
+```
 
-```text
+Complex pattern with groups and backreferences:
+```bash
+./your_program.sh -E "(cat|dog)\1" file.txt  # Matches "catcat" or "dogdog"
+```
+
+## Project Structure
+
+```
 .
 ├── app/
-│   └── main.js       # THE CORE. Contains CLI logic + Regex Engine.
-├── your_program.sh   # Bash wrapper to run the project.
-└── README.md         # This file.
+│   └── main.js              # Complete implementation
+├── .codecrafters/
+│   ├── compile.sh           # Build script
+│   └── run.sh               # Execution wrapper
+├── your_program.sh          # Entry point script
+├── package.json             # Project metadata
+├── codecrafters.yml         # CodeCrafters configuration
+├── README.md                # This file
+└── PROJECT_PLAN.md          # Detailed technical documentation
 ```
 
-## 🧠 Why Build This?
-Building a regex engine is one of the best ways to learn:
-1.  **Recursion Depth**: Handling complex nested states.
-2.  **String Parsing**: Reading and interpreting a formal grammar.
-3.  **State Management**: Keeping track of capture groups across recursive calls.
+## Technical Highlights
+
+- **Zero Dependencies**: Pure JavaScript implementation
+- **Greedy Quantifiers**: Implements standard regex greedy matching with backtracking
+- **Capture Groups**: Full support for nested groups and backreferences
+- **Range Quantifiers**: Supports `{n,m}` syntax for all pattern types
+- **Context Display**: Shows surrounding lines like GNU grep
+- **Color Output**: ANSI color codes for match highlighting
+
+## Use Cases
+
+- Learning regex engine internals
+- Understanding recursive algorithms and backtracking
+- Text processing and log analysis
+- Pattern matching in build tools
+- Educational demonstrations of compiler/interpreter concepts
+
+## Performance Considerations
+
+This engine uses recursive backtracking, which can have exponential time complexity in worst-case scenarios (e.g., `(a+)+b` against `aaaa...c`). For production use with untrusted patterns, consider:
+- Implementing memoization to cache subproblem results
+- Adding recursion depth limits
+- Using iterative NFA/DFA compilation for linear-time guarantees
+
+## Educational Value
+
+Building this project teaches:
+- **Recursion**: Managing complex nested state across function calls
+- **Backtracking**: Exploring solution spaces and undoing failed attempts
+- **Parsing**: Interpreting formal grammars and syntax
+- **State Management**: Tracking captures and positions through recursion
+- **Algorithm Design**: Balancing correctness with performance
+
+## License
+
+MIT License - see package.json for details
+
+## Acknowledgments
+
+Built as part of the CodeCrafters "Build Your Own Grep" challenge
